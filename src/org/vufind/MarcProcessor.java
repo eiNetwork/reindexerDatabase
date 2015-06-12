@@ -230,6 +230,7 @@ private Set<String>							existingEContentIds	= Collections.synchronizedSet(new 
 			while (existingEContentRecordRS.next()) {
 				existingEContentIds.add(existingEContentRecordRS.getString(1));
 			}
+			existingEContentRecordRS.close();
 		} catch (SQLException e) {
 			logger.error("Unable to load checksums for existing records", e);
 			return false;
@@ -257,6 +258,7 @@ private Set<String>							existingEContentIds	= Collections.synchronizedSet(new 
 					settings.setAdd856FieldsAsExternalLinks(eContentDetectionSettingsRS.getBoolean("add856FieldsAsExternalLinks"));
 					detectionSettings.add(settings);
 				}
+				eContentDetectionSettingsRS.close();
 			} catch (SQLException e) {
 				logger.error("Unable to load detection settings for eContent.", e);
 				return false;
@@ -308,6 +310,7 @@ private Set<String>							existingEContentIds	= Collections.synchronizedSet(new 
 					advantageLibraryFacets.add(facetLabel);
 				}
 			}
+			librarySystemFacetRS.close();
 		} catch (SQLException e) {
 			logger.error("Unable to load library System Facet information", e);
 			return false;
@@ -320,6 +323,7 @@ private Set<String>							existingEContentIds	= Collections.synchronizedSet(new 
 				//logger.debug(locationFacetRS.getString("facetLabel") + " = " + locationFacetRS.getLong("locationId"));
 				locationFacets.put(locationFacetRS.getString("facetLabel"), locationFacetRS.getLong("locationId"));
 			}
+			locationFacetRS.close();
 		} catch (SQLException e) {
 			logger.error("Unable to load location Facet information", e);
 			return false;
@@ -725,6 +729,7 @@ private Set<String>							existingEContentIds	= Collections.synchronizedSet(new 
 					// Process record
 					MarcRecordDetails marcInfo = mapMarcInfo(record, logger);
 					if (marcInfo != null) {
+						logger.debug("Processing " + marcInfo.getId());
 						// Check to see if the record has been loaded before
 						int recordStatus;
 						String id = marcInfo.getId();
@@ -960,16 +965,12 @@ private Set<String>							existingEContentIds	= Collections.synchronizedSet(new 
 	//Method won't run if config file DeleteERecordsinDBNotinMarcOrOD not set to true
 	public int deleteMarcRecordInDb(){
 		Connection econtentConn = null;
-		Connection vufindConn = null;
 		int ctr = 0;
 		int arraySize = 0;
 		String ilsId = null;
-		int id = 0;
-		ResultSet rs;
 		
 		try {
 			econtentConn = ReindexProcess.getEcontentConn();
-			vufindConn = ReindexProcess.getVufindConn();
 			
 			getIlsIdsFromEContent = econtentConn.prepareStatement("SELECT ilsid FROM econtent_record where ilsid is not null", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
 			deleteEContentRecordnotinMarc = econtentConn.prepareStatement("DELETE from econtent_record where ilsid = ?");
@@ -993,6 +994,7 @@ private Set<String>							existingEContentIds	= Collections.synchronizedSet(new 
 					}
 					arraySize++;
 				}
+				ilsIds.close();
 			} catch (SQLException e) {
 				logger.error("Unable to delete record - deleteMarcRecordInDb", e);
 			}				

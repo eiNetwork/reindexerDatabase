@@ -72,7 +72,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 	private boolean extractEContentFromUnchangedRecords;
 	private boolean checkOverDrive;
 	private String econtentDBConnectionInfo;
-	private ArrayList<GutenbergItemInfo> gutenbergItemInfo = null;
 	
 	private String vufindUrl;
 	
@@ -86,12 +85,8 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 	private PreparedStatement updateEContentRecordForOverDrive;
 	private PreparedStatement deleteEContentItem;
 	private PreparedStatement deleteEContentRecord;
-	private PreparedStatement doesGutenbergItemExist;
-	private PreparedStatement addGutenbergItem;
-	private PreparedStatement updateGutenbergItem;
 	
 	private PreparedStatement existingEContentRecordLinks;
-	private PreparedStatement existingEContentFormats;
 	private PreparedStatement addSourceUrl;
 	private PreparedStatement updateSourceUrl;
 	
@@ -106,24 +101,20 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 	private PreparedStatement doesOverDriveAvailabilityExist;
 	private PreparedStatement addOverDriveAvailability;
 	private PreparedStatement updateOverDriveAvailability;
+
+	private PreparedStatement getAllOverDriveTitles;
+	private PreparedStatement getExternalData;
+	private PreparedStatement getIndexedMetaData;
+	private PreparedStatement getExternalFormats;
+	private PreparedStatement getMarcMap;
+	private PreparedStatement updateExternalDataIDs;
 	
 	// BA++ Setup additional statements to delete records from db not in OverDrive
 	private PreparedStatement					deleteEContentRecordnotinOverdrive;
 	
 	public ProcessorResults results;
 	
-	//Overdrive API information 
-	private String clientSecret;
-	private String clientKey;
-	private String accountId;
-	private String overDriveAPIToken;
-	private String overDriveAPITokenType;
-	private long overDriveAPIExpiration;
-	private String overDriveProductsKey;
 	private HashMap<String, OverDriveRecordInfo> overDriveTitles = new HashMap<String, OverDriveRecordInfo>();
-	private HashMap<String, Long> advantageCollectionToLibMap = new HashMap<String, Long>();
-	private HashMap<Long, String> libToOverDriveAPIKeyMap = new HashMap<Long, String>();
-	private HashMap<String, Long> overDriveFormatMap = new HashMap<String, Long>();
 	
 	private HashMap<String, String> processedOverDriveRecords = new HashMap<String, String>();
 	private HashMap<String, ArrayList<String>> duplicateOverDriveRecordsInMillennium = new HashMap<String, ArrayList<String>>();
@@ -131,6 +122,9 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 	private HashSet<String> recordsWithoutOverDriveId = new HashSet<String>(); 
 
 	public boolean init(Ini configIni, String serverName, long reindexLogId, Connection vufindConn, Connection econtentConn, Logger logger) {
+		return init(configIni, serverName, reindexLogId, vufindConn, econtentConn, null, logger);
+	}
+	public boolean init(Ini configIni, String serverName, long reindexLogId, Connection vufindConn, Connection econtentConn, Connection reindexerConn, Logger logger) {
 		this.logger = logger;
 		//Import a marc record into the eContent core. 
 		if (!loadConfig(configIni, logger)){
@@ -169,11 +163,9 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		
 		String extractEContentFromUnchangedRecordsVal = configIni.get("Reindex", "extractEContentFromUnchangedRecords");
 		if (extractEContentFromUnchangedRecordsVal == null){
-			//logger.debug("Did not get a value for reindexUnchangedRecordsVal");
 			extractEContentFromUnchangedRecords = false;
 		}else{
 			extractEContentFromUnchangedRecords = Boolean.parseBoolean(extractEContentFromUnchangedRecordsVal);
-			//logger.debug("reindexUnchangedRecords = " + extractEContentFromUnchangedRecords + " " + extractEContentFromUnchangedRecords);
 		}
 		if (clearEContentRecordsAtStartOfIndex) extractEContentFromUnchangedRecords = true;
 		results.addNote("extractEContentFromUnchangedRecords = " + extractEContentFromUnchangedRecords);
@@ -184,28 +176,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		}else{
 			checkOverDrive = Boolean.parseBoolean(checkOverDriveVal);
 		}
-		logger.info("checkOverDrive = " + checkOverDrive);
-		
-		overDriveProductsKey = configIni.get("OverDrive", "productsKey");
-		if (overDriveProductsKey == null){
-			logger.warn("Warning no products key provided for OverDrive");
-		}
-		
-		overDriveFormatMap.put("Adobe EPUB eBook", 410L);
-		overDriveFormatMap.put("Kindle Book", 420L);
-		overDriveFormatMap.put("Microsoft eBook", 1L);
-		overDriveFormatMap.put("OverDrive WMA Audiobook", 25L);
-		overDriveFormatMap.put("OverDrive MP3 Audiobook", 425L);
-		overDriveFormatMap.put("OverDrive Music", 30L);
-		overDriveFormatMap.put("OverDrive Video", 35L);
-		overDriveFormatMap.put("Adobe PDF eBook", 50L);
-		overDriveFormatMap.put("Palm", 150L);
-		overDriveFormatMap.put("Mobipocket eBook", 90L);
-		overDriveFormatMap.put("Disney Online Book", 302L);
-		overDriveFormatMap.put("Open PDF eBook", 450L);
-		overDriveFormatMap.put("Open EPUB eBook", 810L);
-		overDriveFormatMap.put("OverDrive Read", 610L);
-		overDriveFormatMap.put("Streaming Video", 635L);		
 		
 		try {
 			//Connect to the vufind database
@@ -221,12 +191,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			deleteEContentRecord = econtentConn.prepareStatement("UPDATE econtent_record set status = 'deleted' where id = ?");
 			deleteEContentItem = econtentConn.prepareStatement("DELETE FROM econtent_item where id = ?");
 			
-			doesGutenbergItemExist = econtentConn.prepareStatement("SELECT id from econtent_item WHERE recordId = ? AND item_type = ? and notes = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
-			addGutenbergItem = econtentConn.prepareStatement("INSERT INTO econtent_item (recordId, item_type, filename, folder, link, notes, date_added, addedBy, date_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-			updateGutenbergItem = econtentConn.prepareStatement("UPDATE econtent_item SET filename = ?, folder = ?, link = ?, date_updated =? WHERE recordId = ? AND item_type = ? AND notes = ?");
-			
 			existingEContentRecordLinks = econtentConn.prepareStatement("SELECT id, link, libraryId, item_type from econtent_item WHERE recordId = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
-			existingEContentFormats = econtentConn.prepareStatement("SELECT id, externalFormatId, externalFormatNumeric, item_type from econtent_item WHERE recordId = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
 			addSourceUrl = econtentConn.prepareStatement("INSERT INTO econtent_item (recordId, item_type, notes, link, date_added, addedBy, date_updated, libraryId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
 			updateSourceUrl = econtentConn.prepareStatement("UPDATE econtent_item SET link = ?, date_updated = ?, item_type = ?, notes = ? WHERE id = ?");
 			
@@ -234,13 +199,20 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			addOverDriveItem = econtentConn.prepareStatement("INSERT INTO econtent_item (recordId, item_type, externalFormat, externalFormatId, externalFormatNumeric, identifier, sampleName_1, sampleUrl_1, sampleName_2, sampleUrl_2, date_added, addedBy, date_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
 			updateOverDriveItem = econtentConn.prepareStatement("UPDATE econtent_item SET externalFormat = ?, externalFormatId = ?, externalFormatNumeric = ?, identifier = ?, sampleName_1 = ?, sampleUrl_1 = ?, sampleName_2 = ?, sampleUrl_2 = ?, date_updated =? WHERE id = ?");
 			
-			doesOverDriveAvailabilityExist = econtentConn.prepareStatement("SELECT id from econtent_availability where recordId = ? and libraryId = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+			doesOverDriveAvailabilityExist = econtentConn.prepareStatement("SELECT id from econtent_availability where recordId = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
 			addOverDriveAvailability = econtentConn.prepareStatement("INSERT INTO econtent_availability (recordId, copiesOwned, availableCopies, numberOfHolds, libraryId) VALUES (?, ?, ?, ?, ?)");
 			updateOverDriveAvailability = econtentConn.prepareStatement("UPDATE econtent_availability SET copiesOwned = ?, availableCopies = ?, numberOfHolds = ? WHERE id = ?");
 			
 			getEContentRecordStmt = econtentConn.prepareStatement("SELECT * FROM econtent_record WHERE id = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
 			getItemsForEContentRecordStmt = econtentConn.prepareStatement("SELECT * FROM econtent_item WHERE recordId = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
 			getAvailabilityForEContentRecordStmt= econtentConn.prepareStatement("SELECT * FROM econtent_availability WHERE recordId = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+
+			getAllOverDriveTitles = reindexerConn.prepareStatement("SELECT * FROM externalData", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+			getExternalData = reindexerConn.prepareStatement("SELECT * FROM externalData WHERE id = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+			getIndexedMetaData = reindexerConn.prepareStatement("SELECT * FROM indexedMetaData WHERE id = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+			getExternalFormats = reindexerConn.prepareStatement("SELECT externalFormats.id AS id, externalDataId, formatId, formatLink, dateAdded, dateUpdated, sourceId, externalFormatId, externalFormatName, externalFormatNumber, displayFormat FROM externalFormats JOIN format ON (externalFormats.formatId=format.id) WHERE externalFormats.id = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+			getMarcMap = reindexerConn.prepareStatement("SELECT * FROM marcMap WHERE id = ?", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+			updateExternalDataIDs = reindexerConn.prepareStatement("UPDATE externalData SET recordid = ?, ilsid = ? WHERE id = ?");
 			
 			//BA++set up Prepared Statements to delete records from db not in OverDrive
 			deleteEContentRecordnotinOverdrive = econtentConn.prepareStatement("DELETE FROM econtent_record where externalid = ?");
@@ -255,6 +227,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 				recordInfo.setNumItems(existingEcontentIlsIdsRS.getInt(4));
 				existingEcontentIlsIds.put(recordInfo.getIlsId(), recordInfo);
 			}
+			existingEcontentIlsIdsRS.close();
 			
 			PreparedStatement overDriveTitlesWithoutIlsIdStmt = econtentConn.prepareStatement("SELECT econtent_record.id, externalId, status, count(econtent_item.id) as numItems from econtent_item RIGHT join econtent_record on econtent_record.id = recordId WHERE externalId is NOT NULL AND ilsId IS NULL GROUP by externalId", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
 			ResultSet overDriveTitlesWithoutIlsIdRS = overDriveTitlesWithoutIlsIdStmt.executeQuery();
@@ -266,16 +239,10 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 				recordInfo.setNumItems(overDriveTitlesWithoutIlsIdRS.getInt(4));
 				overDriveTitlesWithoutIlsId.put(recordInfo.getExternalId(), recordInfo);
 			}
+			overDriveTitlesWithoutIlsIdRS.close();
 			logger.debug("Found " + overDriveTitlesWithoutIlsId.size() + " records without ilsids in the database.");
 			results.addNote("Found " + overDriveTitlesWithoutIlsId.size() + " records without ilsids in the database.");
-			
-			PreparedStatement advantageCollectionMapStmt = vufindConn.prepareStatement("SELECT libraryId, overdriveAdvantageName, overdriveAdvantageProductsKey FROM library where overdriveAdvantageName > ''");
-			ResultSet advantageCollectionMapRS = advantageCollectionMapStmt.executeQuery();
-			while (advantageCollectionMapRS.next()){
-				advantageCollectionToLibMap.put(advantageCollectionMapRS.getString(2), advantageCollectionMapRS.getLong(1));
-				libToOverDriveAPIKeyMap.put(advantageCollectionMapRS.getLong(1), advantageCollectionMapRS.getString(3));
-			}
-			
+						
 			//BA++ getOverdriveEContentRecordExId
 			int ctr = 0;
 			PreparedStatement getOverdriveEContentRecordExId = econtentConn.prepareStatement("SELECT econtent_record.id, externalid FROM econtent_record WHERE externalid is not null", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
@@ -287,7 +254,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 				overDriveIdsFromEContent.put(recordInfo.getExternalId(), recordInfo);
 				ctr++;
 			}
-			logger.debug("OverdriveEContentRecordExId "  +  ctr);					
+			OverdriveEContentRecordExId.close();
 			
 			
 		} catch (Exception ex) {
@@ -297,515 +264,153 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		}finally{
 			results.saveResults();
 		}
-		return checkOverDrive?loadOverDriveTitlesFromAPI(configIni):true;
+		if( !checkOverDrive ) {
+			return true;
+		} else {
+			try {				
+				return loadOverDriveTitlesFromDatabase(configIni);
+			} catch( JSONException ex ) {
+				// handle any errors
+				logger.error("Error loading econtent titles from database ", ex);
+				return false;
+			}
+		}
 		
 	}
 	
-	private boolean loadOverDriveTitlesFromAPI(Ini configIni) {
-		clientSecret = configIni.get("OverDrive", "clientSecret");
-		clientKey = configIni.get("OverDrive", "clientKey");
-		accountId = configIni.get("OverDrive", "accountId");
-		results.addNote("Loading OverDrive information from API");
-		results.saveResults();
-		if (clientSecret != null && clientKey != null && accountId != null){
-			logger.info("OverDrive Titles url -  http://api.overdrive.com/v1/libraries/" + accountId);
-			//Get the library information 
-			JSONObject libraryInfo = callOverDriveURL("http://api.overdrive.com/v1/libraries/" + accountId);
-			try {
-				String libraryName = libraryInfo.getString("name");
-				String mainProductUrl = libraryInfo.getJSONObject("links").getJSONObject("products").getString("href");
-				//BA++ builds OverDrive array
-				loadProductsFromUrl(libraryName, mainProductUrl, false);
-				logger.info("loaded " + overDriveTitles.size() + " overdrive titles unique in shared collection.");
-				logger.info("Search API url " + mainProductUrl);
-				//Get a list of advantage collections
-				/*if (libraryInfo.getJSONObject("links").has("advantageAccounts")){
-					JSONObject advantageInfo = callOverDriveURL(libraryInfo.getJSONObject("links").getJSONObject("advantageAccounts").getString("href"));
-					JSONArray advantageAccounts = advantageInfo.getJSONArray("advantageAccounts");
-					for (int i = 0; i < advantageAccounts.length(); i++){
-						JSONObject curAdvantageAccount = advantageAccounts.getJSONObject(i);
-						String advantageSelfUrl = curAdvantageAccount.getJSONObject("links").getJSONObject("self").getString("href");
-						JSONObject advantageSelfInfo = callOverDriveURL(advantageSelfUrl);
-						String advantageName = curAdvantageAccount.getString("name");
-						String productUrl = advantageSelfInfo.getJSONObject("links").getJSONObject("products").getString("href");
-						loadProductsFromUrl(advantageName, productUrl, true);
-					}
-					logger.debug("loaded " + overDriveTitles.size() + " overdrive titles in shared collection and advantage collections");
-				}*/
-			} catch (Exception e) {
-				results.addNote("error loading information from OverDrive API " + e.toString());
-				results.incErrors();
-				logger.error("Error loading overdrive titles", e);
-			}
-			
-			return true;
-		}else{
-			results.addNote("Not loading OverDrive information from API since the clientSecret, clientKey, and accountId are not set");
-			return true;
-		}
-	}
-	
-	private void loadProductsFromUrl(String libraryName, String mainProductUrl, boolean isAdvantage) throws JSONException {
-		JSONObject productInfo = callOverDriveURL(mainProductUrl);
+	private boolean loadOverDriveTitlesFromDatabase(Ini configIni) throws JSONException {
 		// Lessa : Added this try/catch block
 		try {
-			long numProducts = productInfo.getLong("totalItems");
-			//if (numProducts > 50) numProducts = 50;
-			logger.info(libraryName + " collection has " + numProducts + " products in it. Count from API.");
-			results.addNote("Loading OverDrive information for " + libraryName);
+			results.addNote("Loading OverDrive information from database");
 			results.saveResults();
-			long batchSize = 300;
-			Long libraryId = getLibraryIdForOverDriveAccount(libraryName);
-			for (int i = 0; i < numProducts; i += batchSize){
-				logger.debug("Processing " + libraryName + " batch from " + i + " to " + (i + batchSize));
-				//String batchUrl = mainProductUrl + "?offset=" + i + "&limit=" + batchSize;
-				String batchUrl = mainProductUrl + "?offset=" + i + "&limit=" + batchSize + "&sort=dateadded:asc";
-				JSONObject productBatchInfo = callOverDriveURL(batchUrl);
-				JSONArray products = productBatchInfo.getJSONArray("products");
-				for(int j = 0; j < products.length(); j++ ){
-					JSONObject curProduct = products.getJSONObject(j);
-					OverDriveRecordInfo curRecord = loadOverDriveRecordFromJSON(libraryName, curProduct);
-					if (libraryId == -1){
-						curRecord.setShared(true);
-					}
-					if (overDriveTitles.containsKey(curRecord.getId())){
-						OverDriveRecordInfo oldRecord = overDriveTitles.get(curRecord.getId());
-						oldRecord.getCollections().add(libraryId);
-					}else{
-						logger.debug("Loading record " + curRecord.getId());
-						overDriveTitles.put(curRecord.getId(), curRecord);
-					}
+			
+			// execute the query
+			ResultSet products = getAllOverDriveTitles.executeQuery();
+			while( products.next() ){
+				OverDriveRecordInfo curRecord = loadOverDriveRecordFromDB(products);
+				if( curRecord != null ) {
+					logger.debug("Loading record " + curRecord.getId());
+					overDriveTitles.put(curRecord.getId(), curRecord);
 				}
 			}
+			products.close();
 		} catch (Exception e) {
-			results.addNote("error loading information from OverDrive Product API " + e.toString());
+			results.addNote("error loading information from OverDrive Database " + e.toString());
 			results.incErrors();
 			logger.error("Error loading overdrive titles", e);
+			return false;
 		}		
+		return true;
 	}
 
-	private Long getLibraryIdForOverDriveAccount(String libraryName) {
-		if (advantageCollectionToLibMap.containsKey(libraryName)){
-			return advantageCollectionToLibMap.get(libraryName);
-		}
-		return -1L;
-	}
-
-	private OverDriveRecordInfo loadOverDriveRecordFromJSON(String libraryName, JSONObject curProduct) throws JSONException {
+	private OverDriveRecordInfo loadOverDriveRecordFromDB(ResultSet titleResults) throws JSONException {
 		OverDriveRecordInfo curRecord = new OverDriveRecordInfo();
-		curRecord.setId(curProduct.getString("id"));
-		logger.debug("Processing overdrive title " + curRecord.getId());
-		//BA+++  sortTitle
-		curRecord.setTitle(curProduct.getString("title"));
-		curRecord.setSortTitle(curProduct.getString("sortTitle"));
-		curRecord.setMediaType(curProduct.getString("mediaType"));
-		if (curProduct.has("series")){
-			curRecord.setSeries(curProduct.getString("series"));
-		}
-		//BA+++Author ok for Marc?
-		if (curProduct.has("primaryCreator")){
-			curRecord.setAuthor(curProduct.getJSONObject("primaryCreator").getString("name"));
-		}
-
-		// If the search api does not return format information, we will get a json error.
-		if (curProduct.has("formats")) {		
-			for (int k = 0; k < curProduct.getJSONArray("formats").length(); k++){
-				curRecord.getFormats().add(curProduct.getJSONArray("formats").getJSONObject(k).getString("id"));
+		try
+		{
+			curRecord.setDatabaseId(titleResults.getInt("id"));
+			curRecord.setId(titleResults.getString("externalId"));
+			logger.debug("Processing overdrive title " + curRecord.getId());
+			//BA+++  sortTitle
+			
+			// grab the formats and metadata for this record
+			getIndexedMetaData.setInt(1, titleResults.getInt("id"));
+			ResultSet metaData = getIndexedMetaData.executeQuery();
+			metaData.next();
+			getExternalFormats.setInt(1, titleResults.getInt("id"));
+			ResultSet formats = getExternalFormats.executeQuery();
+			
+			curRecord.setTitle(metaData.getString("title"));
+			curRecord.setSortTitle(metaData.getString("title_sort"));
+			/*****curRecord.setMediaType(curProduct.getString("mediaType"));/*****/
+			curRecord.setSeries(metaData.getString("series"));
+			//BA+++Author ok for Marc?
+			curRecord.setAuthor(metaData.getString("author"));
+			
+			while ( formats.next() ){
+				curRecord.getFormats().add(formats.getString("formatId"));
 			}
+			curRecord.setCoverImage(metaData.getString("thumbnail"));
+			metaData.close();
+			formats.close();
+			/*****curRecord.getCollections().add(getLibraryIdForOverDriveAccount(libraryName));/*****/
+		} catch ( SQLException e ) {
+			logger.error("Error loading title " + curRecord.getId() + " from database " + e.toString());
+			return null;
 		}
-		
-		if (curProduct.has("images") && curProduct.getJSONObject("images").has("thumbnail")){
-			curRecord.setCoverImage(curProduct.getJSONObject("images").getJSONObject("thumbnail").getString("href"));
-		}
-		curRecord.getCollections().add(getLibraryIdForOverDriveAccount(libraryName));
 		return curRecord;
 	}
 
 	private void loadOverDriveAvailability(OverDriveRecordInfo overDriveInfo) {
-		logger.debug("Loading availability, " + overDriveInfo.getId() + " is in " + overDriveInfo.getCollections().size() + " collections");
+		//logger.debug("Loading availability of " + overDriveInfo.getId() );
 		
-		for (Long curCollection : overDriveInfo.getCollections()){
-			String apiKey = null;
-			if (curCollection == -1L){
-				apiKey = overDriveProductsKey;
-			}else{
-				apiKey = libToOverDriveAPIKeyMap.get(curCollection);
-			}
-			if (apiKey == null){
-				logger.error("Unable to get api key for colleciton " + curCollection);
-			}
-			String url = "http://api.overdrive.com/v1/collections/" + apiKey + "/products/" + overDriveInfo.getId() + "/availability";
-			JSONObject availability = callOverDriveURL(url);
-			
-			try {
-				OverDriveAvailabilityInfo availabilityInfo = new OverDriveAvailabilityInfo();
-				availabilityInfo.setLibraryId(curCollection);
-				if (availability.has("available")){
-					String availableField = availability.getString("available");
-					//logger.debug("Available = " + availableField);
-					availabilityInfo.setAvailable(availableField.equals("true"));
-				}else{
-					availabilityInfo.setAvailable(false);
-				}
-				
-				availabilityInfo.setCopiesOwned(availability.getInt("copiesOwned"));
-				availabilityInfo.setAvailableCopies(availability.getInt("copiesAvailable"));
-				availabilityInfo.setNumHolds(availability.getInt("numberOfHolds"));
-				overDriveInfo.getAvailabilityInfo().put(curCollection, availabilityInfo);
-			} catch (JSONException e) {
-				logger.error("Error loading availability for title " + overDriveInfo.getId() + " " + e.toString());
-				results.addNote("Error loading availability for title " + overDriveInfo.getId() + " " + e.toString());
-				results.incErrors();
-			}
-		}
-	}
-	//BA++++  MetaData
-	private void loadOverDriveMetaData(OverDriveRecordInfo overDriveInfo) {
-		logger.debug("Loading metadata, " + overDriveInfo.getId() + " is in " + overDriveInfo.getCollections().size() + " collections");
-		//Get a list of the collections that own the record 
-		//long firstCollection = overDriveInfo.getCollections().iterator().next();
-		//We only have 1 collection
-		long firstCollection = -1L;
-		String apiKey = null;
-		if (firstCollection == -1L){
-			apiKey = overDriveProductsKey;
-		}else{
-			apiKey = libToOverDriveAPIKeyMap.get(firstCollection);
-		}
-		if (apiKey == null){
-			logger.error("Unable to get api key for colleciton " + firstCollection);
-		}
-		//BA+++ hangs at this spot periodically add try catch
-		JSONObject metaData = null;
-		String url = null;
 		try {
-			url = "http://api.overdrive.com/v1/collections/" + apiKey + "/products/" + overDriveInfo.getId() + "/metadata";
-			logger.info("OverDrive url metadata - " + url);
-			metaData = callOverDriveURL(url);
-		} catch (Exception e) {
-			logger.error("Error returning meta data for title " + overDriveInfo.getId() + " " + e.toString());
-			results.addNote("Error returning meta data for title " + overDriveInfo.getId() + " " + e.toString());
+			OverDriveAvailabilityInfo availabilityInfo = new OverDriveAvailabilityInfo();
+
+			getExternalData.setInt(1, overDriveInfo.getDatabaseId());
+			ResultSet data = getExternalData.executeQuery();
+			data.next();
+			
+			availabilityInfo.setCopiesOwned(data.getInt("totalCopies"));
+			availabilityInfo.setAvailableCopies(data.getInt("availableCopies"));
+			availabilityInfo.setNumHolds(data.getInt("numberOfHolds"));
+			overDriveInfo.setAvailabilityInfo(availabilityInfo);
+			data.close();
+		} catch (SQLException e) {
+			logger.error("Error loading availability for title " + overDriveInfo.getId() + " " + e.toString());
+			results.addNote("Error loading availability for title " + overDriveInfo.getId() + " " + e.toString());
 			results.incErrors();
 		}
-		// skip around the suspect overdrive record
-		//String badoverdrive = "";
-		//String badoverdrive2 = "13212cf9-9dcf-413f-b176-2a38c177332b";
-		//String badoverdrive3 = "93f259d1-e681-41b4-8cdc-942273502d28";
-		//JSONObject metaData = null;
-		//if (url.contains(badoverdrive)) {metaData = null; } else {metaData = callOverDriveURL(url);}
-
-		if (metaData == null){
-			logger.error("Could not load metadata from " + url);
-		}else{
-			try {
-				//logger.debug("Setting up overDriveInfo object");
-				overDriveInfo.setEdition(metaData.has("edition") ? metaData.getString("edition") : "");
-				overDriveInfo.setPublisher(metaData.has("publisher") ? metaData.getString("publisher") : "");
-				overDriveInfo.setPublishDate(metaData.has("publishDate") ? metaData.getString("publishDate") : "");
-				//logger.debug("Set publishdate");
-				if (metaData.has("contributors")){
-					JSONArray contributors = metaData.getJSONArray("contributors");
-					for (int i = 0; i < contributors.length(); i++){
-						JSONObject contributor = contributors.getJSONObject(i);
-						overDriveInfo.getContributors().add(contributor.getString("name"));
-					}
-				}
-				//logger.debug("Set contributors");
-				
-				if (metaData.has("languages")){
-					JSONArray languages = metaData.getJSONArray("languages");
-					for (int i = 0; i < languages.length(); i++){
-						JSONObject language = languages.getJSONObject(i);
-						overDriveInfo.getLanguages().add(language.getString("name"));
-					}
-				}
-				//logger.debug("Set languages");
-				
-				//BA+++  Author
-				if (metaData.has("creators")){
-					JSONArray creators = metaData.getJSONArray("creators");
-					for (int i = 0; i < creators.length(); i++){
-						JSONObject creator = creators.getJSONObject(i);
-						if (creator.getString("role").equals("Author")) {
-							overDriveInfo.setAuthor(creator.getString("fileAs"));
-							break;
-						}
-					}
-				}
-				
-				//logger.debug("JSON Author " + overDriveInfo.getAuthor());
-				
-				if (metaData.has("isPublicDomain")){
-					overDriveInfo.setPublicDomain(metaData.getBoolean("isPublicDomain"));
-				}
-				//logger.debug("Set is public domain");
-				
-				if (metaData.has("isPublicPerformanceAllowed")){
-					overDriveInfo.setPublicPerformanceAllowed(metaData.getBoolean("isPublicPerformanceAllowed"));
-				}
-				//logger.debug("Set is public performance allowed");
-				
-				if (metaData.has("fullDescription")){
-					overDriveInfo.setDescription(metaData.getString("fullDescription"));
-				}else if (metaData.has("shortDescription")){
-					overDriveInfo.setDescription(metaData.getString("shortDescription"));
-				}
-				//logger.debug("Set full description");
-				
-				if (metaData.has("subjects")){
-					JSONArray subjects = metaData.getJSONArray("subjects");
-					for (int i = 0; i < subjects.length(); i++){
-						JSONObject subject = subjects.getJSONObject(i);
-						overDriveInfo.getSubjects().add(subject.getString("value"));
-					}
-				}
-				//logger.debug("Set subjects");
-				
-				JSONArray formats = metaData.getJSONArray("formats");
-				for (int i = 0; i < formats.length(); i++){
-					JSONObject format = formats.getJSONObject(i);
-					OverDriveItem curItem = new OverDriveItem();
-					//logger.debug("Create new overdrive item");
-					curItem.setFormatId(format.getString("id"));
-					//logger.debug("format id " + format.getString("id"));
-					curItem.setFormat(format.getString("name"));
-					//logger.debug("format name " + format.getString("name"));
-					//Check for new formats for OverDrive and make sure the index doesn't halt when we do get a new one
-					Long numericFormat = overDriveFormatMap.get(curItem.getFormat());
-					if (numericFormat == null){
-						logger.error("Could not find numeric format for format " + curItem.getFormat());
-						results.addNote("Could not find numeric format for format " + curItem.getFormat());
-						results.incErrors();
-						System.out.println("Warning: new format for OverDrive found " + curItem.getFormat());
-						continue;
-					}
-					curItem.setFormatNumeric(overDriveFormatMap.get(curItem.getFormat()));
-					//logger.debug("Numeric format");
-					curItem.setFilename(format.getString("fileName"));
-					//logger.debug("Format filename " + format.getString("fileName"));
-					curItem.setPartCount(format.has("partCount") ? format.getLong("partCount") : 0L);
-					//logger.debug("part count" );
-					curItem.setSize(format.has("fileSize") ? format.getLong("fileSize") : 0L);
-					//logger.debug("file size" );
-					if (format.has("identifiers")){
-						StringBuffer identifierValue = new StringBuffer();
-						JSONArray identifiers = format.getJSONArray("identifiers");
-						for (int j = 0; j < identifiers.length(); j++){
-							JSONObject identifier = identifiers.getJSONObject(j);
-							if (identifierValue.length() > 0) {
-								identifierValue.append("\r\n");
-							}
-							identifierValue.append(identifier.getString("value"));
-						}
-						curItem.setIdentifier(format.getJSONArray("identifiers").getJSONObject(0).getString("value"));
-						//logger.debug("Loaded format identifiers");
-					}
-					if (format.has("samples")){
-						JSONArray samples = format.getJSONArray("samples");
-						for (int j = 0; j < samples.length(); j++){
-							JSONObject sample = samples.getJSONObject(j);
-							if (j == 0){
-								curItem.setSampleName_1(sample.getString("source"));
-								curItem.setSampleUrl_1(sample.getString("url"));
-							}else if (j == 1){
-								curItem.setSampleName_2(sample.getString("source"));
-								curItem.setSampleUrl_2(sample.getString("url"));
-							}else{
-								logger.warn("Record " + overDriveInfo.getId() + " had more than 2 samples for format " + curItem.getFormat());
-							}
-						}
-						//logger.debug("Loaded format sample link");
-					}
-					overDriveInfo.getItems().put(curItem.getFormatId(), curItem);
-					//logger.debug("Set formats");
-				}
-				//logger.debug("Done setting up overDriveInfo object");	
-			} catch (JSONException e) {
-				logger.error("Error loading meta data for title " + overDriveInfo.getId() + " " + e.toString());
-				results.addNote("Error loading meta data for title " + overDriveInfo.getId() + " " + e.toString());
-				results.incErrors();
-			}
-		}
-	}
-	
-	private JSONObject callOverDriveURL(String overdriveUrl) {
-		for (int connectTry = 1 ; connectTry < 5; connectTry++){
-			if (connectToOverDriveAPI(connectTry != 1)){
-			//Connect to the API to get our token
-				HttpURLConnection conn = null;
-				try {
-					URL emptyIndexURL = new URL(overdriveUrl);
-					logger.info("overdriveURL " + overdriveUrl);
-					conn = (HttpURLConnection) emptyIndexURL.openConnection();
-					if (conn instanceof HttpsURLConnection){
-						HttpsURLConnection sslConn = (HttpsURLConnection)conn;
-						sslConn.setHostnameVerifier(new HostnameVerifier() {
-							
-							@Override
-							public boolean verify(String hostname, SSLSession session) {
-								//Do not verify host names
-								return true;
-							}
-						});
-					}
-					conn.setRequestMethod("GET");
-					conn.setRequestProperty("Authorization", overDriveAPITokenType + " " + overDriveAPIToken);
-					
-					StringBuffer response = new StringBuffer();
-					if (conn.getResponseCode() == 200) {
-						//logger.debug("Call Overdrive URL -- Response OK");
-						// Get the response
-						BufferedReader rd = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-						String line;
-						while ((line = rd.readLine()) != null) {
-							response.append(line);
-						}
-						//logger.debug("Call Overdrive URL -- Finished reading OK response");
-						rd.close();
-						return new JSONObject(response.toString());
-					} else {
-						logger.error("Received error " + conn.getResponseCode() + " connecting to overdrive API" );
-						
-						// Lessa : Added the request URL to the error log
-						logger.error("Request URL: " + overdriveUrl);
-																		
-						// Get any errors
-						BufferedReader rd = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
-						String line;
-						while ((line = rd.readLine()) != null) {
-							response.append(line);
-						}
-						//logger.debug("Call Overdrive URL -- Finished reading error response");
-						
-						// Lessa : Added any response found in the Error Stream to the error log						
-						if (response != null){													
-							logger.error("Response (Error Stream): " + response.toString());
-						}
-
-						// Lessa : Added any response found in the Input Stream to the error log							
-						response = new StringBuffer();
-						rd = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-						while ((line = rd.readLine()) != null) {
-							response.append(line);
-						}
-						if (response != null){							
-							logger.error("Response (Input Stream): " + response.toString());
-						}
-	
-						rd.close();
-						return null;
-					}
-	
-				} catch (Exception e) {
-					if (connectTry == 3){
-						try {
-							logger.error("Error loading data from overdrive API.  Response Code:"+conn.getResponseCode()+" Error: "+conn.getResponseMessage() + " Header: "+conn.getHeaderFields().toString(), e );
-						} catch (IOException e1) {
-							// TODO Auto-generated catch block
-							logger.error("Error loading data from overdrive API.", e1);
-						}
-						return null;
-					}
-				}
-			}else{
-				if (connectTry == 3){
-					return null;
-				}
-			}
-		}
-		logger.error("Failed to call overdrive url " +overdriveUrl + " in 3 calls");
-		results.addNote("Failed to call overdrive url " +overdriveUrl + " in 3 calls");
-		return null;
 	}
 
-	private boolean connectToOverDriveAPI(boolean getNewToken){
-		//Check to see if we already have a valid token
-		if (overDriveAPIToken != null && getNewToken == false){
-			if (overDriveAPIExpiration - new Date().getTime() > 0){
-				return true;
-			}
-		}
-		//Connect to the API to get our token
-		HttpURLConnection conn = null;
+	//BA++++  MetaData
+	private void loadOverDriveMetaData(OverDriveRecordInfo overDriveInfo) {
+		logger.debug("Loading metadata for " + overDriveInfo.getId() );
 		try {
-			URL emptyIndexURL = new URL("https://oauth.overdrive.com/token");
-			logger.info("OverDrive url is https://oauth.overdrive.com/token");
-			conn = (HttpURLConnection) emptyIndexURL.openConnection();
-			if (conn instanceof HttpsURLConnection){
-				HttpsURLConnection sslConn = (HttpsURLConnection)conn;
-				sslConn.setHostnameVerifier(new HostnameVerifier() {
-					
-					@Override
-					public boolean verify(String hostname, SSLSession session) {
-						//Do not verify host names
-						return true;
-					}
-				});
-			}
-			conn.setRequestMethod("POST");
-			conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8");
-			String encoded = Base64.encodeBase64String(new String(clientKey+":"+clientSecret).getBytes());
-			conn.setRequestProperty("Authorization", "Basic "+encoded);
-			conn.setDoOutput(true);
-			OutputStreamWriter wr = new OutputStreamWriter(conn.getOutputStream(), "UTF8");
-			wr.write("grant_type=client_credentials");
-			wr.flush();
-			wr.close();
+			getIndexedMetaData.setInt(1, overDriveInfo.getDatabaseId());
+			ResultSet data = getIndexedMetaData.executeQuery();
+			data.next();
+			getExternalFormats.setInt(1, overDriveInfo.getDatabaseId());
+			ResultSet format = getExternalFormats.executeQuery();
 			
-			StringBuffer response = new StringBuffer();
-			if (conn.getResponseCode() == 200) {
-				// Get the response
-				BufferedReader rd = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-				String line;
-				while ((line = rd.readLine()) != null) {
-					response.append(line);
-				}
-				rd.close();
-				JSONObject parser = new JSONObject(response.toString());
-				overDriveAPIToken = parser.getString("access_token");
-				overDriveAPITokenType = parser.getString("token_type");
-				overDriveAPIExpiration = parser.getLong("expires_in") - 10000;
-				//logger.info("OverDrive token is " + overDriveAPIToken);
-			} else {
-				logger.error("Received error " + conn.getResponseCode() + " connecting to overdrive API" );
-				
-				// Lessa : Added the request URL to the error log
-				logger.error("Request URL: https://oauth.overdrive.com/token");				
-				
-				// Get any errors
-				BufferedReader rd = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
-				String line;
-				while ((line = rd.readLine()) != null) {
-					response.append(line);
-				}
-				//logger.debug("  Finished reading response");
+			//logger.debug("Setting up overDriveInfo object");
+			overDriveInfo.setEdition(data.getString("edition"));
+			overDriveInfo.setPublisher(data.getString("publisher"));
+			overDriveInfo.setPublishDate(data.getLong("publishDate"));
 
-				// Lessa : Added any response found in the Error Stream to the error log						
-				if (response != null){													
-					logger.error("Response (Error Stream): " + response.toString());
-				}
-
-				// Lessa : Added any response found in the Input Stream to the error log							
-				response = new StringBuffer();
-				rd = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-				while ((line = rd.readLine()) != null) {
-					response.append(line);
-				}
-				if (response != null){							
-					logger.error("Response (Input Stream): " + response.toString());
-				}
-
-				rd.close();
-				return false;
+			JSONArray languages = new JSONArray( data.getString("language") );
+			for (int i = 0; i < languages.length(); i++){
+				JSONObject language = languages.getJSONObject(i);
+				overDriveInfo.getLanguages().add(language.getString("name"));
 			}
-
-		} catch (Exception e) {
-			logger.error("Error connecting to overdrive API", e );
-			return false;
+			//logger.debug("Set languages");
+			
+			while (format.next()){
+				OverDriveItem curItem = new OverDriveItem();
+				//logger.debug("Create new overdrive item");
+				curItem.setFormatId(format.getString("id"));
+				//logger.debug("format id " + format.getString("id"));
+				curItem.setFormat(format.getString("externalFormatName"));
+				//logger.debug("format name " + format.getString("name"));
+				curItem.setFormatNumeric(format.getInt("externalFormatNumber"));
+				//logger.debug("Numeric format");
+				overDriveInfo.getItems().put(curItem.getFormatId(), curItem);
+				//logger.debug("Set formats");
+				
+				format.close();
+				data.close();
+			}
+			//logger.debug("Done setting up overDriveInfo object");	
+		} catch (JSONException e) {
+			logger.error("Error loading meta data for title " + overDriveInfo.getId() + " " + e.toString());
+			results.addNote("Error loading meta data for title " + overDriveInfo.getId() + " " + e.toString());
+			results.incErrors();
+		} catch (SQLException e) {
+			logger.error("Error loading meta data for title " + overDriveInfo.getId() + " " + e.toString());
+			results.addNote("Error loading meta data for title " + overDriveInfo.getId() + " " + e.toString());
+			results.incErrors();
 		}
-		return true;
 	}
-
+	
 	@Override
 	public boolean processMarcRecord(MarcProcessor marcProcessor, MarcRecordDetails recordInfo, int recordStatus, Logger logger) {
 		this.marcProcessor = marcProcessor; 
@@ -872,12 +477,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 							}
 						}
 					}
-				}else{
-					/*if (recordStatus == MarcProcessor.RECORD_CHANGED_PRIMARY){
-						logger.debug("Record has changed");
-					}else{
-						logger.debug("Record is new");
-					}*/
 				}
 				
 				
@@ -904,7 +503,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 				String overDriveId = recordInfo.getExternalId();
 				String cover = "";
 				if (overDriveId != null){
-					logger.debug("OverDrive ID is " + overDriveId);
 					OverDriveRecordInfo overDriveInfo = overDriveTitles.get(overDriveId);
 					if (overDriveInfo != null){
 						cover = overDriveInfo.getCoverImage();
@@ -956,10 +554,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 	private void addItemsToEContentRecord(MarcRecordDetails recordInfo, Logger logger, String source, DetectionSettings detectionSettings, long eContentRecordId) {
 		//Non threaded implementation for adding items
 		boolean itemsAdded = true;
-		if (source.toLowerCase().startsWith("gutenberg")){
-			attachGutenbergItems(recordInfo, eContentRecordId, logger);
-			//BA+++++  Overdrive
-		}else if (source.toLowerCase().startsWith("overdrive")){
+		if (source.toLowerCase().startsWith("overdrive")){
 			itemsAdded = setupOverDriveItems(recordInfo, eContentRecordId, detectionSettings, logger);
 		}else if (detectionSettings.isAdd856FieldsAsExternalLinks()){
 			//Automatically setup 856 links as external links
@@ -973,7 +568,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 
 	private boolean updateEContentRecordInDb(MarcRecordDetails recordInfo, String cover, Logger logger, String source, String accessType, String ilsId, long eContentRecordId,
 			boolean recordUpdated) throws SQLException, IOException {
-		logger.debug("Updating ilsId " + ilsId + " recordId " + eContentRecordId);
 		int curField = 1;
 		//BA+++ Author from primary Creator
 		updateEContentRecord.setString(curField++, recordInfo.getId());
@@ -981,16 +575,11 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		updateEContentRecord.setString(curField++, source);
 		updateEContentRecord.setString(curField++, Util.trimTo(255, recordInfo.getFirstFieldValueInSet("title_short")));
 		updateEContentRecord.setString(curField++, Util.trimTo(255, recordInfo.getFirstFieldValueInSet("title_sub")));
-		//BA+++ author update removed - will be done in non-MARC record call later. - still added for new records.
-//		updateEContentRecord.setString(curField++, recordInfo.getFirstFieldValueInSet("author"));
 		updateEContentRecord.setString(curField++, Util.getCRSeparatedString(recordInfo.getMappedField("author2")));
 		updateEContentRecord.setString(curField++, recordInfo.getDescription());
 		updateEContentRecord.setString(curField++, Util.getCRSeparatedString(recordInfo.getMappedField("contents")));
 		HashMap<String, String> subjects = recordInfo.getBrowseSubjects(false);
 		//logger.debug("Found " + subjects.size() + " subjects");
-		for (String subject : subjects.values()){
-			//logger.debug(subject);
-		}
 		updateEContentRecord.setString(curField++, Util.getCRSeparatedString(subjects.values()));
 		updateEContentRecord.setString(curField++, recordInfo.getFirstFieldValueInSet("language"));
 		updateEContentRecord.setString(curField++, Util.trimTo(255, recordInfo.getFirstFieldValueInSet("publisher")));
@@ -1019,7 +608,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		updateEContentRecord.setString(curField++, recordInfo.toString());
 		updateEContentRecord.setString(curField++, recordInfo.getExternalId());
 		updateEContentRecord.setInt(curField++, recordInfo.hasItemLevelOwnership());
-//		updateEContentRecord.setInt(curField++, recordInfo.hasItemLevelOwnership());
 		updateEContentRecord.setString(curField++, Util.getCRSeparatedString(recordInfo.getMappedField("series")));
 		updateEContentRecord.setLong(curField++, eContentRecordId);
 			//BA++ 1 = successful update   else = no update/failed
@@ -1093,6 +681,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 				eContentRecordId = generatedKeys.getLong(1);
 				results.incAdded();
 			}
+			generatedKeys.close();
 		}
 		return eContentRecordId;
 	}
@@ -1111,6 +700,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 				curLinkInfo.setItemType(allExistingUrls.getString("item_type"));
 				allLinks.add(curLinkInfo);
 			}
+			allExistingUrls.close();
 		} catch (SQLException e) {
 			results.incErrors();
 			results.addNote("Could not load existing links for eContentRecord " + eContentRecordId);
@@ -1198,22 +788,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		
 	}
 	
-	private String getItemTypeByItype(int iType) {
-		if (iType == 188 ){
-			return "external_ebook";
-		}else if (iType == 110){
-			return "external_eaudio";
-		}else if (iType == 111){
-			return "external_evideo";
-		}else if (iType == 216){
-			return "external_web";
-		}else if (iType == 254){
-			return "external_emusic";
-		}else{
-			return "externalLink";
-		}
-	}
-
 	Pattern overdriveIdPattern = Pattern.compile("[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}", Pattern.CANON_EQ);
 	protected boolean setupOverDriveItems(MarcRecordDetails recordInfo, long eContentRecordId, DetectionSettings detectionSettings, Logger logger){
 		ArrayList<LibrarySpecificLink> sourceUrls;
@@ -1224,7 +798,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			results.addNote("Could not load source URLs for overdrive record " + recordInfo.getId() + " " + e.toString());
 			return false;
 		}
-		logger.debug("Found " + sourceUrls.size() + " urls for overdrive id " + recordInfo.getId());
+		//logger.debug("Found " + sourceUrls.size() + " urls for overdrive id " + recordInfo.getId());
 		//Check the items within the record to see if there are any location specific links
 		String overDriveId = null;
 		for(LibrarySpecificLink link : sourceUrls){
@@ -1239,7 +813,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			if (overDriveInfo == null){
 				//results.incErrors();
 				//results.addNote("Did not find overdrive information for id " + overDriveId + " in information loaded from the API.");
-				logger.debug("Did not find overdrive information for id " + overDriveId + " in information loaded from the API.");
+				//logger.debug("Did not find overdrive information for id " + overDriveId + " in information loaded from the API.");
 				millenniumRecordsNotInOverDrive.put(overDriveId, recordInfo);
 				return false;
 			}else{
@@ -1275,26 +849,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		//logger.debug("Adding overdrive items and availability");
 		loadOverDriveMetaData(overDriveInfo);
 		logger.debug("loaded meta data, found " + overDriveInfo.getItems().size() + " items.");
-		// ****Load an array with existing items to determine if there are any formats no longer available
-		ArrayList<LinkInfo> formatLinks = new ArrayList<LinkInfo>();
-		try {
-			existingEContentFormats.setLong(1, eContentRecordId);
-			ResultSet allExistingFormats = existingEContentFormats.executeQuery();
-			while (allExistingFormats.next()){
-				LinkInfo curLinkInfo = new LinkInfo();
-				curLinkInfo.setItemId(allExistingFormats.getLong("id"));
-				curLinkInfo.setLink(allExistingFormats.getString("externalFormatId"));
-				curLinkInfo.setLibraryId(allExistingFormats.getLong("externalFormatNumeric"));
-				curLinkInfo.setItemType(allExistingFormats.getString("item_type"));
-				formatLinks.add(curLinkInfo);
-			}
-		} catch (SQLException e) {
-			results.incErrors();
-			results.addNote("Could not load existing formats for eContentRecord " + eContentRecordId);
-			return;
-		}
-		logger.debug("Found " + formatLinks.size() + " existing formats");		
-		
 		for (OverDriveItem curItem : overDriveInfo.getItems().values()){
 			try {
 				//BA+++ Update OverDrive Record - add Author from loadMetaData
@@ -1302,7 +856,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 				doesOverDriveItemExist.setString(2, curItem.getFormatId());
 				ResultSet existingOverDriveId = doesOverDriveItemExist.executeQuery();
 				if (existingOverDriveId.next()){
-					logger.debug("There is an existing item for this id");
 					Long existingItemId = existingOverDriveId.getLong("id");
 					//Url does not match, add it to the record. 
 					updateOverDriveItem.setString(1, curItem.getFormat());
@@ -1316,17 +869,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 					updateOverDriveItem.setLong(9, new Date().getTime());
 					updateOverDriveItem.setLong(10, existingItemId);
 					updateOverDriveItem.executeUpdate();
-					//remove this format from the list of existing link so that we can track formats no longer available
-					LinkInfo formatLink = null;
-					for (LinkInfo tmpLinkInfo : formatLinks){
-						//logger.debug("Checking link for " + tmpLinkInfo.getLibraryId() + " format " + curItem.getFormatNumeric());
-						if (tmpLinkInfo.getLibraryId() == curItem.getFormatNumeric()){
-							formatLink = tmpLinkInfo;
-							//logger.debug("found format link, removing");
-						}
-					}
-					formatLinks.remove(formatLink);
-					
 				}else{
 					//the url does not exist, insert it
 					addOverDriveItem.setLong(1, eContentRecordId);
@@ -1344,6 +886,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 					addOverDriveItem.setLong(13, new Date().getTime());
 					addOverDriveItem.executeUpdate();
 				}
+				existingOverDriveId.close();
 			} catch (SQLException e) {
 				logger.error("Error adding item to overdrive record " + eContentRecordId + " " + overDriveInfo.getId(), e);
 				results.addNote("Error adding item to overdrive record " + eContentRecordId + " " + overDriveInfo.getId() + " " + e.toString());
@@ -1351,112 +894,38 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			}
 		}
 		
-		//Remove any formats that are no longer available
-		logger.debug("There are " + formatLinks.size() + " formats that need to be deleted");
-		for (LinkInfo tmpLinkInfo : formatLinks){
-			try {
-				deleteEContentItem.setLong(1, tmpLinkInfo.getItemId());
-				deleteEContentItem.executeUpdate();
-			} catch (SQLException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-		}
-		
 		//BA+++ Add availability
 		if (ReindexProcess.isOverDriveAvailabilityAPI()) {
 			loadOverDriveAvailability(overDriveInfo);
-			logger.debug("loaded availability, found " + overDriveInfo.getAvailabilityInfo().size() + " items.");
-			for (Long curLibraryId : overDriveInfo.getAvailabilityInfo().keySet()){
-				OverDriveAvailabilityInfo availabiltyInfo = overDriveInfo.getAvailabilityInfo().get(curLibraryId);
-				try {
-					doesOverDriveAvailabilityExist.setLong(1, eContentRecordId);
-					doesOverDriveAvailabilityExist.setLong(2, curLibraryId);
-					ResultSet availabilityRS = doesOverDriveAvailabilityExist.executeQuery();
-					if (availabilityRS.next()){
-						long availabilityId = availabilityRS.getLong(1);
-						updateOverDriveAvailability.setLong(1, availabiltyInfo.getCopiesOwned());
-						updateOverDriveAvailability.setLong(2, availabiltyInfo.getAvailableCopies());
-						updateOverDriveAvailability.setLong(3, availabiltyInfo.getNumHolds());
-						updateOverDriveAvailability.setLong(4, availabilityId);
-						updateOverDriveAvailability.executeUpdate();
-					}else{
-						addOverDriveAvailability.setLong(1, eContentRecordId);
-						addOverDriveAvailability.setLong(2, availabiltyInfo.getCopiesOwned());
-						addOverDriveAvailability.setLong(3, availabiltyInfo.getAvailableCopies());
-						addOverDriveAvailability.setLong(4, availabiltyInfo.getNumHolds());
-						addOverDriveAvailability.setLong(5, availabiltyInfo.getLibraryId());
-						addOverDriveAvailability.executeUpdate();
-					}
-				} catch (SQLException e) {
-					logger.error("Error adding availability to record " + eContentRecordId + " " + overDriveInfo.getId(), e);
-					results.addNote("Error adding availability to record " + eContentRecordId + " " + overDriveInfo.getId() + " " + e.toString());
-					results.incErrors();
+			OverDriveAvailabilityInfo availabilityInfo = overDriveInfo.getAvailabilityInfo();
+			try {
+				doesOverDriveAvailabilityExist.setLong(1, eContentRecordId);
+				ResultSet availabilityRS = doesOverDriveAvailabilityExist.executeQuery();
+				if (availabilityRS.next()){
+					long availabilityId = availabilityRS.getLong(1);
+					updateOverDriveAvailability.setLong(1, availabilityInfo.getCopiesOwned());
+					updateOverDriveAvailability.setLong(2, availabilityInfo.getAvailableCopies());
+					updateOverDriveAvailability.setLong(3, availabilityInfo.getNumHolds());
+					updateOverDriveAvailability.setLong(4, availabilityId);
+					updateOverDriveAvailability.executeUpdate();
+				}else{
+					addOverDriveAvailability.setLong(1, eContentRecordId);
+					addOverDriveAvailability.setLong(2, availabilityInfo.getCopiesOwned());
+					addOverDriveAvailability.setLong(3, availabilityInfo.getAvailableCopies());
+					addOverDriveAvailability.setLong(4, availabilityInfo.getNumHolds());
+					addOverDriveAvailability.setLong(5, availabilityInfo.getLibraryId());
+					addOverDriveAvailability.executeUpdate();
 				}
+				availabilityRS.close();
+			} catch (SQLException e) {
+				logger.error("Error adding availability to record " + eContentRecordId + " " + overDriveInfo.getId(), e);
+				results.addNote("Error adding availability to record " + eContentRecordId + " " + overDriveInfo.getId() + " " + e.toString());
+				results.incErrors();
 			}
+			overDriveInfo.setAvailabilityInfo(availabilityInfo);
 		}
 	}
 
-	protected synchronized void attachGutenbergItems(MarcRecordDetails recordInfo, long eContentRecordId, Logger logger) {
-		//Add the links that are currently available for the record
-		ArrayList<LibrarySpecificLink> sourceUrls;
-		try {
-			sourceUrls = recordInfo.getSourceUrls();
-		} catch (IOException e1) {
-			results.incErrors();
-			results.addNote("Could not load source URLs for gutenberg record " + recordInfo.getId() + " " + e1.toString());
-			return;
-		}
-		//If no, load the source url
-		for (LibrarySpecificLink curLink : sourceUrls){
-			String sourceUrl = curLink.getUrl();
-			logger.info("Loading gutenberg items " + sourceUrl);
-			try {
-				//Get the source URL from the export of all items. 
-				int numGutenbergItemsFound = 0;
-				for (GutenbergItemInfo curItem : gutenbergItemInfo){
-					if (curItem.getSourceUrl().equalsIgnoreCase(sourceUrl)){
-						numGutenbergItemsFound++;
-						//Check to see if the item is already attached to the record.  
-						doesGutenbergItemExist.setLong(1, eContentRecordId);
-						doesGutenbergItemExist.setString(2, curItem.getFormat());
-						doesGutenbergItemExist.setString(3, curItem.getNotes());
-						ResultSet itemExistRs = doesGutenbergItemExist.executeQuery();
-						if (itemExistRs.next()){
-							//Check to see if the item needs to be updated (different folder or filename)
-							updateGutenbergItem.setString(1, curItem.getFilename());
-							updateGutenbergItem.setString(2, curItem.getFolder());
-							updateGutenbergItem.setString(3, curItem.getLink());
-							updateGutenbergItem.setLong(4, new Date().getTime());
-							updateGutenbergItem.setLong(5, eContentRecordId);
-							updateGutenbergItem.setString(6, curItem.getFormat());
-							updateGutenbergItem.setString(7, curItem.getNotes());
-							updateGutenbergItem.executeUpdate();
-						}else{
-							//Item does not exist, need to add it to the record.
-							addGutenbergItem.setLong(1, eContentRecordId);
-							addGutenbergItem.setString(2, curItem.getFormat());
-							addGutenbergItem.setString(3, curItem.getFilename());
-							addGutenbergItem.setString(4, curItem.getFolder());
-							addGutenbergItem.setString(5, curItem.getLink());
-							addGutenbergItem.setString(6, curItem.getNotes());
-							addGutenbergItem.setLong(7, new Date().getTime());
-							addGutenbergItem.setInt(8, -1);
-							addGutenbergItem.setLong(9, new Date().getTime());
-							addGutenbergItem.executeUpdate();
-						}
-					}
-				}
-				if (numGutenbergItemsFound == 0){
-					logger.warn("No items found for gutenberg title " + recordInfo.getId());
-				}
-				
-				//Attach items based on the source URL
-			} catch (Exception e) {
-				logger.error("Unable to add items for " + eContentRecordId, e);
-			}
-		}
-	}
 	protected void deleteRecord(long eContentRecordId, Logger logger){
 		try {
 			updateServer.deleteById("econtentRecord" + eContentRecordId);
@@ -1488,6 +957,9 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			}else{
 				results.incErrors();
 			}
+			eContentRecordRS.close();
+			eContentItemsRS.close();
+			eContentAvailabilityRS.close();
 		} catch (Exception e) {
 			results.addNote("Error creating xml doc for record " + recordInfo.getId() + " " + e.toString());
 			e.printStackTrace();
@@ -1506,44 +978,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			logger.error("Unable to get URL for VuFind in General settings.  Please add a vufindUrl key.");
 			return false;
 		}
-		
-		//Get a list of information about Gutenberg items
-		/*
-		String gutenbergItemFile = configIni.get("Reindex", "gutenbergItemFile");
-		if (gutenbergItemFile == null || gutenbergItemFile.length() == 0){
-			logger.warn("Unable to get Gutenberg Item File in Process settings.  Please add a gutenbergItemFile key.");
-		}else{
-			HashSet<String> validFormats = new HashSet<String>();
-			validFormats.add("epub");
-			validFormats.add("pdf");
-			validFormats.add("jpg");
-			validFormats.add("gif");
-			validFormats.add("mp3");
-			validFormats.add("plucker");
-			validFormats.add("kindle");
-			validFormats.add("externalLink");
-			validFormats.add("externalMP3");
-			validFormats.add("interactiveBook");
-			validFormats.add("overdrive");
-			
-			//Load the items 
-			gutenbergItemInfo = new ArrayList<GutenbergItemInfo>();
-			try {
-				CSVReader gutenbergReader = new CSVReader(new FileReader(gutenbergItemFile));
-				//Read headers
-				gutenbergReader.readNext();
-				String[] curItemInfo = gutenbergReader.readNext();
-				while (curItemInfo != null){
-					GutenbergItemInfo itemInfo = new GutenbergItemInfo(curItemInfo[1], curItemInfo[2], curItemInfo[3], curItemInfo[4], curItemInfo[5]);
-					
-					gutenbergItemInfo.add(itemInfo);
-					curItemInfo = gutenbergReader.readNext();
-				}
-			} catch (Exception e) {
-				logger.error("Could not read Gutenberg Item file");
-			}
-			
-		}*/
 		
 		return true;		
 	}	
@@ -1568,7 +1002,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 					if (econtentRecordId != -1  && ! ReindexProcess.isCallAPIAddOnly()){
 						addOverdriveItemsAndAvailability(recordInfo, econtentRecordId);
 					}
-				}else{
+				} else {
 					//New title
 					econtentRecordId = addOverDriveRecordWithoutMarcRecordToDb(recordInfo);
 					if (econtentRecordId != -1){
@@ -1600,31 +1034,13 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		
 		doc.addField("collection", "Allegheny County Catalog");
 		int numHoldings = 0;
-		for (Long systemId : recordInfo.getAvailabilityInfo().keySet()){
-			OverDriveAvailabilityInfo curAvailability = recordInfo.getAvailabilityInfo().get(systemId);
-			numHoldings += curAvailability.getCopiesOwned();
-			if (systemId == -1){
-				doc.addField("institution", "Digital Collection");
-				doc.addField("building", "Digital Collection");
-				for (String libraryFacet : marcProcessor.getAdvantageLibraryFacets()){
-					doc.addField("institution", libraryFacet + " Online");
-					doc.addField("building", libraryFacet + " Online");
-				}
-				if (curAvailability.isAvailable()){
-					doc.addField("available_at", "Digital Collection");
-					for (String libraryFacet : marcProcessor.getAdvantageLibraryFacets()){
-						doc.addField("available_at", libraryFacet + " Online");
-					}
-				}
-				
-			}else{
-				String libraryName = marcProcessor.getLibrarySystemFacetForId(systemId);
-				doc.addField("institution", libraryName + " Online");
-				doc.addField("building", libraryName + " Online");
-				if (curAvailability.isAvailable()){
-					doc.addField("available_at", libraryName + " Online");
-				}
-			}
+		OverDriveAvailabilityInfo curAvailability = recordInfo.getAvailabilityInfo();
+		logger.debug("availability => " + curAvailability + "   TEST ---> " + ((curAvailability == null) ? "X0" : curAvailability.getCopiesOwned()));
+		numHoldings += (curAvailability == null) ? 0 : curAvailability.getCopiesOwned();
+		doc.addField("institution", "Digital Collection");
+		doc.addField("building", "Digital Collection");
+		if (curAvailability != null && curAvailability.isAvailable()){
+			doc.addField("available_at", "Digital Collection");
 		}
 		doc.addField("collection_group", "Electronic Access");
 		if (recordInfo.getLanguages().size() == 0){
@@ -1696,7 +1112,8 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			doc.addField("topic_facet", curSubject);
 		}
 		doc.addField("publisher", recordInfo.getPublisher());
-		String publishDate = new String(recordInfo.getPublishDate());
+		SimpleDateFormat formatter2 = new SimpleDateFormat("yyyy-MM-dd");
+		String publishDate = formatter2.format(recordInfo.getPublishDate());
 		if ( publishDate != null && publishDate.length() > 5 ) {
 			publishDate = publishDate.substring(0,4);
 		}
@@ -1707,7 +1124,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		doc.addField("series", recordInfo.getSeries());
 		//BA+++  date_added, time_since_added
 		doc.addField("date_added", getDateAdded(recordInfo.getPublishDate()));
-		doc.addField("time_since_added", getRelativeTimeAdded(recordInfo.getPublishDate()));
+		doc.addField("time_since_added", getTimeSinceAddedForDate(new Date(recordInfo.getPublishDate())));
 		//Deal with always available titles by reducing hold count
 		if (numHoldings > 1000){
 			numHoldings = 5;
@@ -1767,7 +1184,8 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		
 		//BA+++ publishDate	
 		//logger.error("Update Publish Date " + recordInfo.getPublishDate());
-		String publishDate = new String(recordInfo.getPublishDate());
+		SimpleDateFormat formatter2 = new SimpleDateFormat("yyyy-MM-dd");
+		String publishDate = formatter2.format(recordInfo.getPublishDate());
 		if ( publishDate != null && publishDate.length() > 5 ) {
 			publishDate = publishDate.substring(0,4);
 		}
@@ -1794,7 +1212,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 
 	private long addOverDriveRecordWithoutMarcRecordToDb(OverDriveRecordInfo recordInfo) throws SQLException, IOException {
 		long eContentRecordId= -1;
-		logger.debug("Adding OverDriveRecordWithoutMarcRecord to the database. author " + recordInfo.getAuthor() + "  id  " + recordInfo.getId());
+		logger.debug("Adding OverDriveRecordWithoutMarcRecord to the database.");
 		createEContentRecordForOverDrive.setString(1, recordInfo.getCoverImage());
 		createEContentRecordForOverDrive.setString(2, "OverDrive");
 		createEContentRecordForOverDrive.setString(3, Util.trimTo(255, recordInfo.getTitle()));
@@ -1813,7 +1231,8 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		createEContentRecordForOverDrive.setString(11, identifiers.toString());
 		//BA+++ publishDate
 		//logger.error("Create Publish Date " + recordInfo.getPublishDate());
-		String publishDate = new String(recordInfo.getPublishDate());
+		SimpleDateFormat formatter2 = new SimpleDateFormat("yyyy-MM-dd");
+		String publishDate = formatter2.format(recordInfo.getPublishDate());
 		if ( publishDate != null && publishDate.length() > 5 ) {
 			publishDate = publishDate.substring(0,4);
 		}
@@ -1845,11 +1264,9 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 	public int deleteOverDriveTitlesInDb(){
 		int ctr = 0;
 		results.addNote("Removing Non-OverDrive titles from econtent_record");
-		logger.debug("overDriveTitles " + overDriveTitles.size());
 		if ( overDriveTitles.size() > 45000 )
 		{			
 			for (String overDriveId : overDriveIdsFromEContent.keySet()){
-				logger.debug("Check econtent_record by external ID " + overDriveId);
 				try {
 					if ( ! overDriveTitles.containsKey(overDriveId) ){
 						removeEContentRecordFromDb(overDriveId);
@@ -2037,12 +1454,9 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		return vufindUrl;
 	}
 
-	public String getDateAdded(String publishDate) {
+	public String getDateAdded(Long publishDate) {
 			try {
-				//logger.error("date added for OD nonMarc record " + publishDate);
-				SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
-				//formatter.setTimeZone(TimeZone.getTimeZone("GMT"));
-				Date dateAdded = formatter.parse(publishDate);
+				Date dateAdded = new Date(publishDate);
 				SimpleDateFormat formatter2 = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
 				return formatter2.format(dateAdded);
 			} catch (Exception ex) {
@@ -2053,23 +1467,20 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 	}
 	
 	public String getRelativeTimeAdded(String date) {
-
+	
 		if (date == null) return null;
-
+	
 		SimpleDateFormat formatter2 = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
 		try {
 			Date publishDate = formatter2.parse(date);
-			logger.info("getRelativeTimeAdded " + publishDate + "   " + date);
 			return getTimeSinceAddedForDate(publishDate);
 		} catch (ParseException e) {
-			logger.error("Error parsing date " + date + " in getRelativeTimeAdded - ExtractEContent");
 		}
 		return null;
 	}
-
+	
 	public String getTimeSinceAddedForDate(Date curDate) {
 		long timeDifferenceDays = (new Date().getTime() - curDate.getTime()) / (1000 * 60 * 60 * 24);
-		logger.info("Time Difference Days: " + timeDifferenceDays);
 		if (timeDifferenceDays <= 1) {
 			return "Day";
 		}
@@ -2097,5 +1508,4 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		}
 		return null;
 	}
-	
 }
