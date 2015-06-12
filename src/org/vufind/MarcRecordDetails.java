@@ -396,9 +396,14 @@ public class MarcRecordDetails {
 		if (!fieldVals.isEmpty()) {
 			if (fieldVals.size() == 1) {
 				String value = fieldVals.iterator().next();
-				indexMap.put(ixFldName, value);
-			} else
+				if( value.contains("|") ) {
+					indexMap.put(ixFldName, value.split("\\|"));
+				} else {
+					indexMap.put(ixFldName, value);
+				}
+			} else {
 				indexMap.put(ixFldName, fieldVals);
+			}
 		}
 	}
 
@@ -694,7 +699,7 @@ public class MarcRecordDetails {
 	 * Get the specified substring of subfield values from the specified MARC
 	 * field, returned as a set of strings to become lucene document field values
 	 * 
-	 * @param record
+	 * @param record available
 	 *          - the marc record object
 	 * @param fldTag
 	 *          - the field name, e.g. 008
@@ -1005,6 +1010,8 @@ public class MarcRecordDetails {
 		Object retval = null;
 		Class<?> returnType = null;
 		String id = this.getId();
+		
+		//logger.debug(indexType + ", " + indexField + ", " + mapName + ", " + indexParm);
 
 		Class<?> classThatContainsMethod = this.getClass();
 		Object objectThatContainsMethod = this;
@@ -2028,6 +2035,12 @@ public class MarcRecordDetails {
 	//BA++++ getLocationCodes
 	public Set<String> getLocationCodes(String locationSpecifier, String locationSpecifier2) {
 		if (locationCodes != null) {
+			//BA+++++ Digital Collection
+			boolean add = addDigitalCatalog();
+			if (add)
+			{
+				addLocationCode("dc", locationCodes);
+			}
 			return locationCodes;
 		}
 
@@ -2074,13 +2087,15 @@ public class MarcRecordDetails {
 				}
 			}
 		}
+		
 		//BA+++++ Digital Collection
-		/*boolean add = addDigitalCatalog();
+		boolean add = addDigitalCatalog();
 		if (add)
 		{
-			addLocationCode("Digital Collection", locationCodes);
-		}*/
+			addLocationCode("dc", locationCodes);
+		}
 		return locationCodes;
+		
 	}
 
 	static Pattern steamboatJuvenileCodes = Pattern.compile("^(ssbj[aejlnpuvkbrm]|ssbyl|ssc.*|sst.*)$");
@@ -2656,11 +2671,6 @@ public class MarcRecordDetails {
 			result.add("Unknown");
 		}
 
-		/*
-		 * Iterator iter = result.iterator(); while (iter.hasNext()){
-		 * System.out.println("Audience: " + iter.next().toString()); }
-		 */
-
 		return result;
 	}
 
@@ -3029,15 +3039,6 @@ public class MarcRecordDetails {
 			}
 		}
 
-		// Check to see if the record is already loaded into the eContent core
-		/*if (!suppressRecord) {
-			String ilsId = this.getId();
-			if (marcProcessor.getExistingEContentIds().contains(ilsId)) {
-				logger.debug("Suppressing because there is an eContent record for " + ilsId);
-				suppressRecord = true;
-			}
-		}*/
-
 		if (suppressRecord) {
 			// return that the record is suppressed
 			return "suppressed";
@@ -3095,6 +3096,12 @@ public class MarcRecordDetails {
 		String availableStatus = "-";
 		Set<String> result = new LinkedHashSet<String>();
 		if (isEContent()){
+			//BA+++++ Digital Collection
+			boolean add = addDigitalCatalog();
+			if (add)
+			{
+				result.add("Digital Collection");
+			}
 			return result;
 		}
 		@SuppressWarnings("unchecked")
@@ -3128,6 +3135,12 @@ public class MarcRecordDetails {
 					//logger.warn("No status field for " + this.getId() + " indicator " + statusSubFieldChar  );
 				}
 			}
+		}
+		//BA+++++ Digital Collection
+		boolean add = addDigitalCatalog();
+		if (add)
+		{
+			result.add("Digital Collection");
 		}
 		return result;
 	}
@@ -3171,58 +3184,7 @@ public class MarcRecordDetails {
 		if (isEContent == null) {
 			//logger.debug("Checking if record is eContent");
 			isEContent = false;
-			//BA++ 037 not used
-			// Check the 037 field first
-			/*@SuppressWarnings("unchecked")
-			List<DataField> oh37Fields = (List<DataField>)record.getVariableFields("037");
-			for (DataField oh37 : oh37Fields){
-				Subfield subFieldB = oh37.getSubfield('b');
-				Subfield subFieldC = oh37.getSubfield('c');
-				if (subFieldB != null && subFieldC != null){
-					String subfieldBVal = subFieldB.getData().trim();
-					String subfieldCVal = subFieldC.getData().trim();
-					DetectionSettings tempDetectionSettings = new DetectionSettings();
-					//Normalize Overdrive since we do specific things with that. 
-					if (subfieldBVal.matches("(?i)overdrive.*")){
-						subfieldBVal = "OverDrive";
-					}
-					tempDetectionSettings.setSource(subfieldBVal);
-					if (subfieldCVal.equalsIgnoreCase("External")){
-						tempDetectionSettings.setAccessType("external");
-						tempDetectionSettings.setAdd856FieldsAsExternalLinks(true);
-						tempDetectionSettings.setItem_type("externalLink");
-						isEContent = true;
-					}else if (subfieldCVal.equalsIgnoreCase("DRM")){
-						tempDetectionSettings.setAccessType("acs");
-						isEContent = true;
-					}else if (subfieldCVal.equalsIgnoreCase("Public Domain")){
-						tempDetectionSettings.setAccessType("free");
-						tempDetectionSettings.setAdd856FieldsAsExternalLinks(true);
-						isEContent = true;
-					}else if (subfieldCVal.equalsIgnoreCase("Single Use")){
-						tempDetectionSettings.setAccessType("singleUse");
-						isEContent = true;
-					}
-					if (isEContent){
-						eContentDetectionSettings.put(subfieldBVal, tempDetectionSettings);
-						return isEContent;
-					}
-				}
-			}*/
-			
-			//BA++ check 945s
-			/*@SuppressWarnings("unchecked")
-			List<DataField> nine45Fields = (List<DataField>)record.getVariableFields("945");
-			for (DataField nine45 : nine45Fields){
-				Subfield subFieldS = nine45.getSubfield('s');
-				if (subFieldS != null){
-					String subfieldSVal = subFieldS.getData().trim();
-					if (! subfieldSVal.matches("(?s)v")){
-						isEContent = false;
-					}
-				}
-			}*/
-			
+
 			//BA++++
 			// Treat the record as eContent if the records is:
 			// 1) It is already in the eContent database
@@ -3326,6 +3288,7 @@ public class MarcRecordDetails {
 		}else{
 			//logger.debug("Found locationId " + locationId + " for location " + locationCode + " " + locationFacet);
 		}
+		logger.info("Location - " + locationId);
 		return locationId;
 	}
 	
@@ -3379,13 +3342,6 @@ public class MarcRecordDetails {
 	
 	public String toString(){
 		String rawRecord = getRawRecord();
-		/*for (int i = 128; i <= 255; i++ ){
-			rawRecord = rawRecord.replaceAll("\\x" + Integer.toHexString(i), "#" + i + ";");
-		}
-		for (int i = 1; i <= 31; i++ ){
-			rawRecord = rawRecord.replaceAll("\\x" + Integer.toHexString(i), "#" + i + ";");
-		}*/
-		
 
 		rawRecord = rawRecord.replaceAll("\\x1F", "#31;");
 		rawRecord = rawRecord.replaceAll("\\x1E", "#30;");
@@ -3531,15 +3487,12 @@ public class MarcRecordDetails {
 			}
 			//TODO: determine if acs and single use titles are actually available
 			if (libraryId == -1L){
-				logger.debug("Add Digital Collection " + econtentRecordId);
+				//logger.debug("Add Digital Collection " + econtentRecordId);
 				itemAvailability.add("Digital Collection");
 				itemAvailability = addSharedAvailability(source, itemAvailability);
 				//logger.debug("Available at " + itemAvailability.size() + " locations");
 				buildings.add("Digital Collection");
 				buildings = addSharedAvailability(source, buildings);
-			}else{
-				itemAvailability.add(marcProcessor.getLibrarySystemFacetForId(libraryId) + " Online");
-				buildings.add(marcProcessor.getLibrarySystemFacetForId(libraryId) + " Online");
 			}
 		}
 		int numHoldings = 0;
@@ -3555,16 +3508,11 @@ public class MarcRecordDetails {
 					addSharedAvailability(source, availableAt);
 					buildings.add("Digital Collection");
 					buildings = addSharedAvailability(source, buildings);
-				}else{
-					availableAt.add(marcProcessor.getLibrarySystemFacetForId(libraryId) + " Online");
-					buildings.add(marcProcessor.getLibrarySystemFacetForId(libraryId) + " Online");
 				}
 			}else{
 				if (libraryId == -1L){
 					buildings.add("Digital Collection");
 					buildings = addSharedAvailability(source, buildings);
-				}else{
-					buildings.add(marcProcessor.getLibrarySystemFacetForId(libraryId) + " Online");
 				}
 			}
 			numHoldings += copiesOwned;
@@ -3582,6 +3530,8 @@ public class MarcRecordDetails {
 			addFields(mappedFields, "institution", null, buildings);
 			addFields(mappedFields, "building", null, buildings);
 		}
+
+		
 		addFields(mappedFields, "format", "format_map", formats);
 		if (formats.size() > 0){
 			String firstFormat = formats.iterator().next();
@@ -3620,9 +3570,6 @@ public class MarcRecordDetails {
 		//logger.debug("Determining if shared availability should be added");
 		if (source.matches("(?i)^overdrive.*")){
 			//logger.debug("Adding shared availability");
-			for (String libraryFacet : marcProcessor.getAdvantageLibraryFacets()){
-				itemAvailability.add(libraryFacet + " Online");
-			}
 		}
 		return itemAvailability;
 	}
@@ -3644,6 +3591,7 @@ public class MarcRecordDetails {
 	
 	//BA++++++ ADD Digital Collection
 	public boolean addDigitalCatalog() {
+		
 		boolean ret = false;
 		@SuppressWarnings("unchecked")
 		List<VariableField> itemRecords = record.getVariableFields("945");
@@ -3655,7 +3603,7 @@ public class MarcRecordDetails {
 			if (indicator2 == '0' || indicator2 == '1' ){
 				ret = true;
 			}
-			else if ( itemRecords == null  && eightFiftySixDataField.getSubfield('u') == null ) {
+			else if ( itemRecords == null  && eightFiftySixDataField.getSubfield('u') != null ) {
 				ret = true;			
 			}
 		}

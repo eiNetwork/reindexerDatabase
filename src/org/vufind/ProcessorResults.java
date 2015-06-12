@@ -176,6 +176,7 @@ public class ProcessorResults {
 				if (resultIdRS.next()){
 					resultsId = resultIdRS.getLong(1); 
 				}
+				resultIdRS.close();
 			}else{
 				updateResultsStmt.setLong(1, getRecordsProcessed());
 				updateResultsStmt.setLong(2, geteContentRecordsProcessed());

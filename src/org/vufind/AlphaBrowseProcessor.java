@@ -37,11 +37,6 @@ public class AlphaBrowseProcessor implements IMarcRecordProcessor, IEContentProc
 	private PreparedStatement	insertSubjectBrowseValue;
 	private PreparedStatement	insertCallNumberBrowseValue;
 	
-	/*private PreparedStatement optimizeTitleStmt;
-	private PreparedStatement optimizeAuthorStmt;
-	private PreparedStatement optimizeSubjectStmt;
-	private PreparedStatement optimizeCallNumberStmt;*/
-	
 	private PreparedStatement	getLibraryIdsForEContent;
 	private HashMap<String, PreparedStatement> insertTitleBrowseScopeValueStmts;
 	private HashMap<String, PreparedStatement>	insertAuthorBrowseScopeValueStmts;
@@ -99,6 +94,7 @@ public class AlphaBrowseProcessor implements IMarcRecordProcessor, IEContentProc
 			while (libraryInfoRS.next()){
 				librarySubdomains.put(libraryInfoRS.getLong("libraryId"), libraryInfoRS.getString("subdomain"));
 			}
+			libraryInfoRS.close();
 			//logger.debug("found " + librarySubdomains.size() + "library subdomains");
 			
 			getExistingBrowseRecordsStmt = vufindConn.prepareStatement("SELECT distinct record from title_browse_scoped_results_global", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
@@ -107,11 +103,6 @@ public class AlphaBrowseProcessor implements IMarcRecordProcessor, IEContentProc
 			clearCallNumberBrowseRecordInfoStmts = new HashMap<String, PreparedStatement>();
 			clearSubjectBrowseRecordInfoStmts = new HashMap<String, PreparedStatement>();
 			clearTitleBrowseRecordInfoStmts = new HashMap<String, PreparedStatement>();
-			
-			/*optimizeTitleStmt = vufindConn.prepareStatement("OPTIMIZE TABLE title_browse");
-			optimizeAuthorStmt = vufindConn.prepareStatement("OPTIMIZE TABLE author_browse");
-			optimizeSubjectStmt = vufindConn.prepareStatement("OPTIMIZE TABLE subject_browse");
-			optimizeCallNumberStmt = vufindConn.prepareStatement("OPTIMIZE TABLE callnumber_browse");*/
 			
 			clearAuthorBrowseRecordInfoStmts.put("global", vufindConn.prepareStatement("DELETE FROM author_browse_scoped_results_global where record = ?"));
 			clearCallNumberBrowseRecordInfoStmts.put("global", vufindConn.prepareStatement("DELETE FROM callnumber_browse_scoped_results_global where record = ?"));
@@ -249,26 +240,10 @@ public class AlphaBrowseProcessor implements IMarcRecordProcessor, IEContentProc
 			if (results.getRecordsProcessed() % 100 == 0){
 				results.saveResults();
 			}
-			/*if (results.getRecordsProcessed() % 10000 == 0){
-				optimizeTables();
-			}*/
 		}
 		
 	}
 	
-	/*private void optimizeTables(){
-		try {
-			optimizeTitleStmt.execute();
-			optimizeAuthorStmt.execute();
-			optimizeSubjectStmt.execute();
-			optimizeCallNumberStmt.execute();
-		} catch (SQLException e) {
-			results.addNote("Error processing optimizing tables " + e.toString());
-			results.incErrors();
-			logger.error("Error processing optimizing tables ", e);
-		}
-	}*/
-
 	private void clearBrowseInfoForRecord(String id) {
 		try {
 			for (PreparedStatement curStatement: clearAuthorBrowseRecordInfoStmts.values()){
@@ -504,9 +479,6 @@ public class AlphaBrowseProcessor implements IMarcRecordProcessor, IEContentProc
 				insertBrowseScoping(browseType, browseValue, recordIdFull, insertBrowseLibraryScopeValueStatement, browseValueId);
 			}
 		}
-		/*for (Long curLocation: resourceLocations){
-			insertBrowseScoping(browseType, browseValue, 2, curLocation, recordIdFull, getExistingBrowseScopeValueStatement, insertBrowseScopeValueStatement, updateBrowseScopeValueStatement, browseValueId);
-		}*/
 	}
 
 	private void insertBrowseScoping(String browseType, String browseValue, String recordIdFull,
@@ -548,6 +520,7 @@ public class AlphaBrowseProcessor implements IMarcRecordProcessor, IEContentProc
 				}else{
 					results.addNote("Could not add browse value to table");
 					results.incErrors();
+					browseValueIdRS.close();
 					return null;
 				}
 			}
@@ -559,8 +532,11 @@ public class AlphaBrowseProcessor implements IMarcRecordProcessor, IEContentProc
 				getExistingBrowseValueStatement.setString(1, browseValue);
 				ResultSet existingValue = getExistingBrowseValueStatement.executeQuery();
 				if (existingValue.next()){
-					return existingValue.getLong("id");
+					long evId = existingValue.getLong("id");
+					existingValue.close();
+					return evId;
 				}
+				existingValue.close();
 			} catch (SQLException e1) {
 				results.addNote("Could get existing browse value '" + browseValue + "' in table " + browseType + ": " + e1.toString());
 				results.incErrors();
@@ -582,9 +558,9 @@ public class AlphaBrowseProcessor implements IMarcRecordProcessor, IEContentProc
 			ResultSet existingValueRS = getExistingBrowseValueStatement.executeQuery();
 			if (existingValueRS.next()){
 				existingBrowseValueId = existingValueRS.getLong("id");
-				existingValueRS.close();
 				existingValues.put(browseValue, existingBrowseValueId);
 			}
+			existingValueRS.close();
 		}else{
 			//logger.debug("Found cached value");
 		}
@@ -610,6 +586,7 @@ public class AlphaBrowseProcessor implements IMarcRecordProcessor, IEContentProc
 		while (libraryIdsForEContentRs.next()){
 			librariesForResource.add(libraryIdsForEContentRs.getLong("libraryId"));
 		}
+		libraryIdsForEContentRs.close();
 		return librariesForResource;
 	}
 	
@@ -633,6 +610,7 @@ public class AlphaBrowseProcessor implements IMarcRecordProcessor, IEContentProc
 			//TODO: Add all locations within the library to the list
 			//locationsForResource.add(libraryIdsForEContentRs.getLong("libraryId"));
 		}
+		libraryIdsForEContentRs.close();
 		return locationsForResource;
 	}
 

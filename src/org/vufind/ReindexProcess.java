@@ -67,6 +67,7 @@ public class ReindexProcess {
 	//Database connections and prepared statements
 	private static Connection vufindConn = null;
 	private static Connection econtentConn = null;
+	private static Connection reindexerConn = null;
 	
 	private static PreparedStatement updateCronLogLastUpdatedStmt;
 	private static PreparedStatement addNoteToCronLogStmt;
@@ -91,6 +92,8 @@ public class ReindexProcess {
 		if (args.length > 1){
 			indexSettings = args[1];
 		}
+		
+		logger.debug("test debug 123");
 		
 		initializeReindex();
 		
@@ -238,7 +241,7 @@ public class ReindexProcess {
 		if (loadEContentFromMarc){
 			addNoteToCronLog("Initializing ExtractEContentFromMarc");
 			ExtractEContentFromMarc econtentExtractor = new ExtractEContentFromMarc();
-			if (econtentExtractor.init(configIni, serverName, reindexLogId, vufindConn, econtentConn, logger)){
+			if (econtentExtractor.init(configIni, serverName, reindexLogId, vufindConn, econtentConn, reindexerConn, logger)){
 				supplementalProcessors.add(econtentExtractor);
 				if ( isDeleteERecordsinDBNotinMarcOrOD() ) {
 					int delRecs = econtentExtractor.deleteOverDriveTitlesInDb();
@@ -249,17 +252,6 @@ public class ReindexProcess {
 				System.exit(1);
 			}
 		}
-		//Strands not used BA++ 8/13/2014
-		/*if (exportStrandsCatalog){
-			addNoteToCronLog("Initializing StrandsProcessor");
-			StrandsProcessor strandsProcessor = new StrandsProcessor();
-			if (strandsProcessor.init(configIni, serverName, reindexLogId, vufindConn, econtentConn, logger)){
-				supplementalProcessors.add(strandsProcessor);
-			}else{
-				logger.error("Could not initialize strandsProcessor");
-				System.exit(1);
-			}
-		}*/
 		if (updateAlphaBrowse){
 			addNoteToCronLog("Initializing AlphaBrowseProcessor");
 			AlphaBrowseProcessor alphaBrowseProcessor = new AlphaBrowseProcessor();
@@ -319,6 +311,7 @@ public class ReindexProcess {
 					}
 				}
 			}
+			resourceCountRs.close();
 		} catch (Exception e) {
 			logger.error("Exception processing resources", e);
 			System.out.println("Exception processing resources " + e.toString());
@@ -377,6 +370,7 @@ public class ReindexProcess {
 					updateLastUpdateTime();
 				}
 			}
+			allEContent.close();
 		} catch (SQLException ex) {
 			// handle any errors
 			logger.error("Unable to load econtent records from database", ex);
@@ -599,6 +593,18 @@ public class ReindexProcess {
 			System.exit(1);
 		}
 		
+		String reindexerDBConnectionInfo = Util.cleanIniValue(configIni.get("Database", "database_reindexer_jdbc"));
+		if (reindexerDBConnectionInfo == null || reindexerDBConnectionInfo.length() == 0) {
+			logger.error("Database connection information for reindexer database not found in Database Section.  Please specify connection information as database_reindexer_jdbc key.");
+			System.exit(1);
+		}
+		try {
+			reindexerConn = DriverManager.getConnection(reindexerDBConnectionInfo);
+		} catch (SQLException e) {
+			logger.error("Could not connect to reindexer database", e);
+			System.exit(1);
+		}
+		
 		//Start a reindex log entry 
 		try {
 			logger.info("Creating log entry for index");
@@ -611,6 +617,7 @@ public class ReindexProcess {
 			if (generatedKeys.next()){
 				reindexLogId = generatedKeys.getLong(1);
 			}
+			generatedKeys.close();
 			
 			updateCronLogLastUpdatedStmt = vufindConn.prepareStatement("UPDATE reindex_log SET lastUpdate = ? WHERE id = ?");
 			addNoteToCronLogStmt = vufindConn.prepareStatement("UPDATE reindex_log SET notes = ?, lastUpdate = ? WHERE id = ?");

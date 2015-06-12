@@ -6,6 +6,7 @@ import java.util.HashSet;
 public class OverDriveRecordInfo {
 	//Data from base title calll
 	private String id;
+	private int databaseId;
 	private String mediaType;
 	private String title;
 	//BA+++ add sortTitle;
@@ -14,13 +15,12 @@ public class OverDriveRecordInfo {
 	private String author;
 	private HashSet<String> formats = new HashSet<String>();
 	private String coverImage;
-	private HashSet<Long> collections = new HashSet<Long>();
 	//Data from availability call
-	private HashMap<Long, OverDriveAvailabilityInfo> availabilityInfo = new HashMap<Long, OverDriveAvailabilityInfo>();
+	private OverDriveAvailabilityInfo availabilityInfo;
 	//Data from metadata call
 	private String edition;
 	private String publisher;
-	private String publishDate;
+	private Long publishDate;
 	private HashSet<String> contributors = new HashSet<String>();
 	private HashSet<String> languages = new HashSet<String>();
 	private boolean isPublicDomain;
@@ -36,6 +36,12 @@ public class OverDriveRecordInfo {
 	}
 	public void setId(String id) {
 		this.id = id.toLowerCase();
+	}
+	public int getDatabaseId() {
+		return databaseId;
+	}
+	public void setDatabaseId(int id) {
+		this.databaseId = id;
 	}
 	public String getMediaType() {
 		return mediaType;
@@ -70,16 +76,13 @@ public class OverDriveRecordInfo {
 	public void setCoverImage(String coverImage) {
 		this.coverImage = coverImage;
 	}
-	public HashSet<Long> getCollections() {
-		return collections;
-	}
 	public boolean isShared() {
 		return isShared;
 	}
 	public void setShared(boolean isShared) {
 		this.isShared = isShared;
 	}
-	public HashMap<Long, OverDriveAvailabilityInfo> getAvailabilityInfo() {
+	public OverDriveAvailabilityInfo getAvailabilityInfo() {
 		return availabilityInfo;
 	}
 	public String getEdition() {
@@ -94,10 +97,10 @@ public class OverDriveRecordInfo {
 	public void setPublisher(String publisher) {
 		this.publisher = publisher;
 	}
-	public String getPublishDate() {
+	public Long getPublishDate() {
 		return publishDate;
 	}
-	public void setPublishDate(String publishDate) {
+	public void setPublishDate(Long publishDate) {
 		this.publishDate = publishDate;
 	}
 	public HashSet<String> getLanguages() {
@@ -139,7 +142,7 @@ public class OverDriveRecordInfo {
 	public void setFormats(HashSet<String> formats) {
 		this.formats = formats;
 	}
-	public void setAvailabilityInfo(HashMap<Long, OverDriveAvailabilityInfo> availabilityInfo) {
+	public void setAvailabilityInfo(OverDriveAvailabilityInfo availabilityInfo) {
 		this.availabilityInfo = availabilityInfo;
 	}
 	public void setSortTitle(String sortTitle) {
