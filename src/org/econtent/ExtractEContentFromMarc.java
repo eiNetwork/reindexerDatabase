@@ -395,10 +395,10 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 				//logger.debug("Numeric format");
 				overDriveInfo.getItems().put(curItem.getFormatId(), curItem);
 				//logger.debug("Set formats");
-				
-				format.close();
-				data.close();
 			}
+				
+			format.close();
+			data.close();
 			//logger.debug("Done setting up overDriveInfo object");	
 		} catch (JSONException e) {
 			logger.error("Error loading meta data for title " + overDriveInfo.getId() + " " + e.toString());
@@ -1035,7 +1035,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		doc.addField("collection", "Allegheny County Catalog");
 		int numHoldings = 0;
 		OverDriveAvailabilityInfo curAvailability = recordInfo.getAvailabilityInfo();
-		logger.debug("availability => " + curAvailability + "   TEST ---> " + ((curAvailability == null) ? "X0" : curAvailability.getCopiesOwned()));
 		numHoldings += (curAvailability == null) ? 0 : curAvailability.getCopiesOwned();
 		doc.addField("institution", "Digital Collection");
 		doc.addField("building", "Digital Collection");
