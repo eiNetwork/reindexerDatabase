@@ -93,8 +93,6 @@ public class ReindexProcess {
 			indexSettings = args[1];
 		}
 		
-		logger.debug("test debug 123");
-		
 		initializeReindex();
 		
 		// Runs the export process to extract marc records from the ILS (if applicable)

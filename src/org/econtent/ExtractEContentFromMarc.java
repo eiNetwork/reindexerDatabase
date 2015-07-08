@@ -286,13 +286,17 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			
 			// execute the query
 			ResultSet products = getAllOverDriveTitles.executeQuery();
+			int numLoaded = 0;
 			while( products.next() ){
 				OverDriveRecordInfo curRecord = loadOverDriveRecordFromDB(products);
 				if( curRecord != null ) {
 					logger.debug("Loading record " + curRecord.getId());
 					overDriveTitles.put(curRecord.getId(), curRecord);
+					numLoaded++;
 				}
 			}
+			// BP ==> Baked in library name so it matches our previous reindexing stats workflow for the help desk
+			logger.info("Carnegie Library of Pittsburgh (PA) collection has " + numLoaded + " products in it. Count from Reindexer DB.");
 			products.close();
 		} catch (Exception e) {
 			results.addNote("error loading information from OverDrive Database " + e.toString());
@@ -315,24 +319,28 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			// grab the formats and metadata for this record
 			getIndexedMetaData.setInt(1, titleResults.getInt("id"));
 			ResultSet metaData = getIndexedMetaData.executeQuery();
-			metaData.next();
-			getExternalFormats.setInt(1, titleResults.getInt("id"));
-			ResultSet formats = getExternalFormats.executeQuery();
-			
-			curRecord.setTitle(metaData.getString("title"));
-			curRecord.setSortTitle(metaData.getString("title_sort"));
-			/*****curRecord.setMediaType(curProduct.getString("mediaType"));/*****/
-			curRecord.setSeries(metaData.getString("series"));
-			//BA+++Author ok for Marc?
-			curRecord.setAuthor(metaData.getString("author"));
-			
-			while ( formats.next() ){
-				curRecord.getFormats().add(formats.getString("formatId"));
+			if(metaData.next()) {
+				getExternalFormats.setInt(1, titleResults.getInt("id"));
+				ResultSet formats = getExternalFormats.executeQuery();
+				
+				curRecord.setTitle(metaData.getString("title"));
+				curRecord.setSortTitle(metaData.getString("title_sort"));
+				/*****curRecord.setMediaType(curProduct.getString("mediaType"));/*****/
+				curRecord.setSeries(metaData.getString("series"));
+				//BA+++Author ok for Marc?
+				curRecord.setAuthor(metaData.getString("author"));
+				
+				while ( formats.next() ){
+					curRecord.getFormats().add(formats.getString("formatId"));
+				}
+				curRecord.setCoverImage(metaData.getString("thumbnail"));
+				metaData.close();
+				formats.close();
+				/*****curRecord.getCollections().add(getLibraryIdForOverDriveAccount(libraryName));/*****/
+			} else {
+				logger.error("No metadata to load");
+				return null;
 			}
-			curRecord.setCoverImage(metaData.getString("thumbnail"));
-			metaData.close();
-			formats.close();
-			/*****curRecord.getCollections().add(getLibraryIdForOverDriveAccount(libraryName));/*****/
 		} catch ( SQLException e ) {
 			logger.error("Error loading title " + curRecord.getId() + " from database " + e.toString());
 			return null;
@@ -375,7 +383,14 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			//logger.debug("Setting up overDriveInfo object");
 			overDriveInfo.setEdition(data.getString("edition"));
 			overDriveInfo.setPublisher(data.getString("publisher"));
-			overDriveInfo.setPublishDate(data.getLong("publishDate"));
+			//overDriveInfo.setPublishDate(data.getLong("publishDate"));
+			try {
+				SimpleDateFormat formatter2 = new SimpleDateFormat("yyyy-MM-dd");
+				Date datePublished = formatter2.parse(data.getString("publishDate").substring(0, 10));
+				overDriveInfo.setPublishDate(datePublished.getTime());
+			} catch (ParseException e) {
+				logger.error("Exception parsing " + data.getString("publishDate"));
+			}
 
 			JSONArray languages = new JSONArray( data.getString("language") );
 			for (int i = 0; i < languages.length(); i++){
@@ -1014,7 +1029,6 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 				//Reindex the record
 				SolrInputDocument doc = createSolrDocForOverDriveRecord(recordInfo, econtentRecordId);
 				updateServer.add(doc);
-
 				
 			} catch (Exception e) {
 				logger.error("Error processing eContent record " + overDriveId , e);
@@ -1048,6 +1062,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		}else{
 			for (String curLanguage : recordInfo.getLanguages()){
 				doc.addField("language", curLanguage);
+				/***
 				if (curLanguage.equalsIgnoreCase("English")){
 					doc.addField("language_boost", "300");
 					doc.addField("language_boost_es", "0");
@@ -1058,6 +1073,13 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 					doc.addField("language_boost", "0");
 					doc.addField("language_boost_es", "0");
 				}
+				/***/
+				if (curLanguage.equalsIgnoreCase("English")){
+					doc.addField("language_boost", "300");
+				}else if (curLanguage.equalsIgnoreCase("Spanish")){
+					doc.addField("language_boost_es", "300");
+				}
+				/***/
 			}
 		}
 		
@@ -1085,6 +1107,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 					}
 				}
 			}
+			/***
 			String devicesForFormat = marcProcessor.findMap("device_compatibility_map").get(curItem.getFormat().replace(" ", "_"));
 			if (devicesForFormat != null){
 				String[] devices = devicesForFormat.split("\\|");
@@ -1092,11 +1115,14 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 					econtentDevices.add(device);
 				}
 			}
+			***/
 		}
+		/***
 		if (firstFormat != null){
 			doc.addField("format_boost", marcProcessor.findMap("format_boost_map").get(firstFormat));
 			doc.addField("format_category", marcProcessor.findMap("format_category_map").get(firstFormat));
 		}
+		***/
 		doc.addField("author", recordInfo.getAuthor());
 		for (String curContributor : recordInfo.getContributors()){
 			doc.addField("author2", curContributor);
@@ -1140,15 +1166,17 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		doc.addField("econtent_source", "OverDrive");
 		doc.addField("econtent_protection_type", "external");
 		doc.addField("recordtype", "econtentRecord");
-		Float rating = marcProcessor.getEcontentRatings().get(econtentRecordId);
+		Float rating = null; //***marcProcessor.getEcontentRatings().get(econtentRecordId);
 		if (rating == null) {
 			rating = -2.5f;
 		}
 		doc.addField("rating", Float.toString(rating));
+		/***
 		Set<String> ratingFacets = marcProcessor.getGetRatingFacet(rating);
 		for (String ratingFacet : ratingFacets){
 			doc.addField("rating_facet", ratingFacet);
 		}
+		***/
 		
 		Collection<String> allFieldNames = doc.getFieldNames();
 		StringBuffer fieldValues = new StringBuffer();
@@ -1306,6 +1334,9 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 				addOverDriveTitlesWithoutMarcToIndex();
 			}
 		}
+		
+		// dump out the count of updated records
+		logger.info("loaded " + overDriveTitles.size() + " overdrive titles unique in shared collection.");
 	
 		//Make sure that the index is good and swap indexes
 		results.addNote("calling final commit on index");
@@ -1314,6 +1345,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 		
 		try {
 			results.addNote("calling final commit on index");
+
 			URLPostResponse response = Util.postToURL("http://localhost:" + solrPort + "/solr/econtent2/update/", "<commit />", logger);
 			if (!response.isSuccess()){
 				results.incErrors();
@@ -1330,8 +1362,7 @@ public class ExtractEContentFromMarc implements IMarcRecordProcessor, IRecordPro
 			} catch (Exception e) {	
 				results.addNote("Error optimizing econtent2 index");
 			}
-
-			
+						
 			if (checkMarcImport()){
 				results.addNote("index passed checks, swapping cores so new index is active.");
 				logger.info("index passed checks, swapping cores so new index is active.");
