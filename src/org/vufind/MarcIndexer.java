@@ -61,12 +61,16 @@ public class MarcIndexer implements IMarcRecordProcessor, IRecordProcessor {
 
 	@Override
 	public void finish() {
+		/*** BP -> My research suggests that commit is already included in optimize, so we are duplicating a lot of effort here.  I'm commenting out the commit 
+		           to see whether we can ge by with just an optimize.
 		//Make sure that the index is good and swap indexes
 		results.addNote("calling final commit on index");
 		URLPostResponse response = Util.postToURL("http://localhost:" + solrPort + "/solr/biblio2/update/", "<commit />", logger);
 		if (!response.isSuccess()){
 			results.addNote("Error committing changes " + response.getMessage());
 		}
+		***/
+		URLPostResponse response;
 		results.addNote("optimizing index");
 		//response = Util.postToURL("http://localhost:" + solrPort + "/solr/biblio2/update/", "<optimize />", logger);
 		//if (!response.isSuccess()){
