@@ -3023,7 +3023,7 @@ public class MarcRecordDetails {
 
 		if (!suppressRecord) {
 			// Now, check for manually suppressed record where the bib suppression tag specified in mar_local.properties
-			// Updated to support multiple bcode3 values that can be suppressed.  
+			// Updated to support multiple bcode3 values that can be suppressed -- currently n and i
 			// Note this does not support multiple MARC fields each with different values for suppression 
 			if (manualSuppressionField != null && !manualSuppressionField.equals("null")) {
 				Set<String> input2 = getFieldList(record, manualSuppressionField);
